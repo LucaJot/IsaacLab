@@ -144,7 +144,8 @@ def main():
     env_cfg.pp_setup = args_cli.pp_setup
     # setup RL environment
     env = HawUr5Env(cfg=env_cfg)
-    env.camera.reset()
+    env.camera_rgb.reset()
+    env.camera_depth.reset()
 
     if PUBLISH_2_ROS:
         # ROS 2 initialization
