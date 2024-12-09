@@ -52,7 +52,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     )
     # Camera
     camera_cfg = CameraCfg(
-        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/rgb_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
+        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
         height=480,
         width=640,
@@ -64,7 +64,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
             clipping_range=(0.1, 1.0e5),
         ),
         offset=CameraCfg.OffsetCfg(
-            pos=(0.055, -0.03, 0.025), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
+            pos=(0.05, 0.0, 0.015), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
         ),
     )
 
