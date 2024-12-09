@@ -25,7 +25,6 @@ parser.add_argument(
 parser.add_argument(
     "--num_envs", type=int, default=2, help="Number of environments to spawn."
 )
-
 parser.add_argument(
     "--log_data",
     type=bool,
@@ -145,8 +144,7 @@ def main():
     env_cfg.pp_setup = args_cli.pp_setup
     # setup RL environment
     env = HawUr5Env(cfg=env_cfg)
-    env.camera_rgb.reset()
-    env.camera_depth.reset()
+    env.camera.reset()
 
     if PUBLISH_2_ROS:
         # ROS 2 initialization
