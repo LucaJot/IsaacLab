@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--pub2ros",
     type=bool,
-    default=False,
+    default=True,
     help="Publish the action commands via a ros node to a forward position position controller. This will enable real robot parallel control.",
 )
 
@@ -28,7 +28,7 @@ parser.add_argument(
 parser.add_argument(
     "--log_data",
     type=bool,
-    default=False,
+    default=True,
     help="Log the joint angles into the influxdb / grafana setup.",
 )
 
@@ -44,6 +44,7 @@ parser.add_argument(
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
+args_cli.enable_cameras = True
 
 # Check if --pub2ros is True
 if args_cli.pub2ros and args_cli.num_envs != 1:
@@ -166,7 +167,7 @@ def main():
             action_scaling=env.action_scale,
         )
 
-    elbow_lift = 0.5
+    elbow_lift = -0.1
     count = 0
 
     while simulation_app.is_running():
@@ -201,7 +202,7 @@ def main():
             # Control real robot and setup logging
             if PUBLISH_2_ROS:
                 # Send ros actions to the real robot
-                ur5_controller.set_joint_delta(actions[0, :7].numpy())
+                ur5_controller.set_joint_delta(actions[0, :7].numpy())  # type: ignore
                 real_joint_positions = ur5_controller.get_joint_positions()
                 bucket = "simrealjointdata"
             # If not publishing to ROS, set real joint positions to None and switch to sim data bucket

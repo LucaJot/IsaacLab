@@ -37,6 +37,10 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
 
+    episode_length_s = 120
+    observation_space = 7
+    action_space = 3
+
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
 
@@ -70,7 +74,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     # Camera
     camera_depth_cfg = CameraCfg(
-        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/rgb_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
+        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/depth_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
         height=480,
         width=640,
