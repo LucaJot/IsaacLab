@@ -21,6 +21,8 @@ from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sensors import CameraCfg, Camera
 import numpy as np
 from numpy import float64
+import cv2
+import matplotlib.pyplot as plt
 
 
 @configclass
@@ -307,12 +309,9 @@ class HawUr5Env(DirectRLEnv):
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
-        # Print shapes
-        print(f"RGB shape: {rgb.shape}")
-        print(f"Depth shape: {depth.shape}")
 
         # Extract the cubes position and orientation from the rgb and depth images
-        # TODO
+        # TODO: Implement cube detection from the images
 
         obs = torch.cat(
             (
@@ -325,9 +324,9 @@ class HawUr5Env(DirectRLEnv):
             ),
             dim=-1,
         )
-        print(f"Observation shape: {obs.shape}")
+        # print(f"Observation shape: {obs.shape}")
 
-        observations = {"policy": obs}
+        observations = {"policy": obs, "images": {"rgb": rgb, "depth": depth}}
         return observations
 
     def _get_rewards(self) -> torch.Tensor:

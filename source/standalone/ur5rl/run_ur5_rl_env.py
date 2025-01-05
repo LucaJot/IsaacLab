@@ -23,7 +23,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--num_envs", type=int, default=2, help="Number of environments to spawn."
+    "--num_envs", type=int, default=4, help="Number of environments to spawn."
 )
 parser.add_argument(
     "--log_data",
@@ -67,7 +67,9 @@ simulation_app = app_launcher.app
 
 import torch
 from ur5_rl_env import HawUr5EnvCfg, HawUr5Env
-
+import gymnasium as gym
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ----------------- ROS -----------------
 import rclpy
@@ -130,6 +132,64 @@ def sync_sim_joints_with_real_robot(env: HawUr5Env, ur5_controller: Ur5JointCont
     env.set_joint_angles_absolute(joint_angles=real_joint_positions)
 
 
+class RealTimeVisualizer:
+    def __init__(self, rgb_shape, depth_shape, save_to_disk=False):
+        self.save_to_disk = save_to_disk
+        self.fig, self.axes = plt.subplots(1, 2, figsize=(12, 6))
+        self.rgb_shape = rgb_shape
+        self.depth_shape = depth_shape
+
+        self.axes[0].set_title("RGB Image")
+        self.axes[1].set_title("Depth Image")
+
+        self.axes[0].axis("off")
+        self.axes[1].axis("off")
+
+        self.rgb_plot = self.axes[0].imshow(np.zeros(self.rgb_shape, dtype=np.uint8))
+        self.depth_plot = self.axes[1].imshow(
+            np.zeros(self.depth_shape, dtype=np.uint8), cmap="gray", vmin=0, vmax=255
+        )
+
+        if not save_to_disk:
+            plt.ion()
+
+    def update(self, rgb_image, depth_image, step=0):
+        if step % 100 == 0:
+            # Print depth statistics for debugging
+            print(f"Step {step}: Depth Image Statistics")
+            print(
+                f"Min: {depth_image.min()}, Max: {depth_image.max()}, Mean: {depth_image.mean()}"
+            )
+
+            # Replace invalid values
+            depth_image = np.nan_to_num(depth_image, nan=0.0)
+
+            # Normalize depth image
+            if depth_image.max() > depth_image.min():  # Avoid divide-by-zero
+                depth_image_normalized = (
+                    (np.clip(depth_image, a_min=0.0, a_max=2.0)) / (2) * 255
+                ).astype(np.uint8)
+            else:
+                depth_image_normalized = np.zeros_like(depth_image, dtype=np.uint8)
+
+            # Update the plots
+            self.rgb_plot.set_data(rgb_image)
+            self.depth_plot.set_data(depth_image_normalized)
+
+            if self.save_to_disk:
+                plt.savefig(
+                    f"/home/luca/Pictures/isaacsimcameraframes/frame_{step}.png"
+                )
+            else:
+                self.fig.canvas.draw_idle()
+                plt.pause(0.1)
+
+    def close(self):
+        if not self.save_to_disk:
+            plt.ioff()
+        plt.close(self.fig)
+
+
 def main():
     """Main function."""
 
@@ -142,7 +202,7 @@ def main():
     # create environment configuration
     env_cfg = HawUr5EnvCfg()
     env_cfg.scene.num_envs = args_cli.num_envs
-    env_cfg.pp_setup = False  # args_cli.pp_setup
+    env_cfg.pp_setup = True  # args_cli.pp_setup
     # setup RL environment
     env = HawUr5Env(cfg=env_cfg)
     env.camera_rgb.reset()
@@ -167,8 +227,12 @@ def main():
             action_scaling=env.action_scale,
         )
 
-    elbow_lift = -0.1
+    elbow_lift = +0.8
     count = 0
+
+    rgb_shape = (480, 640, 3)  # Replace with the actual shape of your RGB images
+    depth_shape = (480, 640)  # Replace with the actual shape of your Depth images
+    visualizer = RealTimeVisualizer(rgb_shape, depth_shape, save_to_disk=True)
 
     while simulation_app.is_running():
         with torch.inference_mode():
@@ -224,6 +288,22 @@ def main():
 
             # Step the environment
             obs, rew, terminated, truncated, info = env.step(actions)
+
+            rgb_images = obs["images"]["rgb"]  # type: ignore
+            depth_images = obs["images"]["depth"]  # type: ignore
+
+            # Ensure tensors are converted to numpy arrays
+            if isinstance(rgb_images, torch.Tensor):
+                rgb_images = rgb_images.cpu().numpy()
+            if isinstance(depth_images, torch.Tensor):
+                depth_images = depth_images.cpu().numpy()
+
+            # Extract the first environment's images
+            rgb_env = rgb_images[0]  # First environment's RGB image
+            depth_env = depth_images[0, ..., 0]  # First environment's Depth image
+
+            # Update the visualization
+            visualizer.update(rgb_env, depth_env, step=count)
 
             # # Camera logging DEBUG
             # # print information from the sensors
