@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--pub2ros",
     type=bool,
-    default=True,
+    default=False,
     help="Publish the action commands via a ros node to a forward position position controller. This will enable real robot parallel control.",
 )
 
@@ -142,7 +142,7 @@ def main():
     # create environment configuration
     env_cfg = HawUr5EnvCfg()
     env_cfg.scene.num_envs = args_cli.num_envs
-    env_cfg.pp_setup = args_cli.pp_setup
+    env_cfg.pp_setup = False  # args_cli.pp_setup
     # setup RL environment
     env = HawUr5Env(cfg=env_cfg)
     env.camera_rgb.reset()

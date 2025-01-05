@@ -305,15 +305,28 @@ class HawUr5Env(DirectRLEnv):
         )
 
     def _get_observations(self) -> dict:
+        rgb = self.camera_rgb.data.output["rgb"]
+        depth = self.camera_depth.data.output["distance_to_camera"]
+        # Print shapes
+        print(f"RGB shape: {rgb.shape}")
+        print(f"Depth shape: {depth.shape}")
+
+        # Extract the cubes position and orientation from the rgb and depth images
+        # TODO
+
         obs = torch.cat(
             (
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
+                # rgb,
+                # depth,
             ),
             dim=-1,
         )
+        print(f"Observation shape: {obs.shape}")
+
         observations = {"policy": obs}
         return observations
 
