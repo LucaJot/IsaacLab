@@ -22,6 +22,7 @@ from omni.isaac.lab.sensors import CameraCfg, Camera
 import numpy as np
 from numpy import float64
 import cv2
+from ultralytics import YOLO
 import matplotlib.pyplot as plt
 
 
@@ -85,7 +86,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
             focal_length=24.0,
             focus_distance=400.0,
             horizontal_aperture=20.955,
-            clipping_range=(0.1, 1.0e5),
+            clipping_range=(0.1, 10),
         ),
         offset=CameraCfg.OffsetCfg(
             pos=(0.055, 0.0, 0.025), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
@@ -164,6 +165,9 @@ class HawUr5Env(DirectRLEnv):
         self.action_dim = len(self._arm_dof_idx) + len(self._gripper_dof_idx)
 
         self.gripper_action_bin: torch.Tensor | None = None
+
+        # Yolo model for cube detection
+        # self.yolov11 = YOLO("yolo11s.pt")
 
     def get_joint_pos(self):
         return self.live_joint_pos
@@ -306,12 +310,40 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
+    def get_cube_positions(self, rgb_image: torch.Tensor, depth_image: torch.Tensor):
+        """
+        Extract positions of red cubes in the camera frame for all environments.
+
+        Args:
+            rgb_image (torch.Tensor): RGB image of shape (n, 480, 640, 3).
+            depth_image (torch.Tensor): Depth image of shape (n, 480, 640, 1).
+
+        Returns:
+            list: A list of arrays containing the positions of red cubes in each environment.
+        """
+        rgb_images_np = rgb_image.cpu().numpy()
+        depth_images_np = depth_image.squeeze(-1).cpu().numpy()
+
+        # Iterate over the images of all environments
+        for env_idx in range(rgb_image.shape[0]):
+            rgb_image_np = rgb_images_np[env_idx]
+
+            hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
+            lower_red = np.array([0, 100, 100])
+            upper_red = np.array([10, 255, 255])
+
+            red_mask = cv2.inRange(hsv, lower_red, upper_red)
+
+            cv2.imwrite(
+                f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png", red_mask
+            )
+
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
 
-        # Extract the cubes position and orientation from the rgb and depth images
-        # TODO: Implement cube detection from the images
+        # Extract the cubes position from the rgb and depth images
+        self.get_cube_positions(rgb, depth)
 
         obs = torch.cat(
             (

@@ -28,7 +28,7 @@ parser.add_argument(
 parser.add_argument(
     "--log_data",
     type=bool,
-    default=True,
+    default=False,
     help="Log the joint angles into the influxdb / grafana setup.",
 )
 
@@ -155,12 +155,6 @@ class RealTimeVisualizer:
 
     def update(self, rgb_image, depth_image, step=0):
         if step % 100 == 0:
-            # Print depth statistics for debugging
-            print(f"Step {step}: Depth Image Statistics")
-            print(
-                f"Min: {depth_image.min()}, Max: {depth_image.max()}, Mean: {depth_image.mean()}"
-            )
-
             # Replace invalid values
             depth_image = np.nan_to_num(depth_image, nan=0.0)
 
@@ -188,6 +182,14 @@ class RealTimeVisualizer:
         if not self.save_to_disk:
             plt.ioff()
         plt.close(self.fig)
+
+
+# SETUP VARS
+elbow_lift = 0.3
+args_cli.pub2ros = False
+args_cli.log_data = False
+args_cli.num_envs = 1
+args_cli.pp_setup = True
 
 
 def main():
@@ -227,7 +229,6 @@ def main():
             action_scaling=env.action_scale,
         )
 
-    elbow_lift = +0.8
     count = 0
 
     rgb_shape = (480, 640, 3)  # Replace with the actual shape of your RGB images
@@ -292,6 +293,10 @@ def main():
             rgb_images = obs["images"]["rgb"]  # type: ignore
             depth_images = obs["images"]["depth"]  # type: ignore
 
+            # # Print shapes
+            # print(f"RGB Shape: {rgb_images.shape}")
+            # print(f"Depth Shape: {depth_images.shape}")
+
             # Ensure tensors are converted to numpy arrays
             if isinstance(rgb_images, torch.Tensor):
                 rgb_images = rgb_images.cpu().numpy()
@@ -304,20 +309,6 @@ def main():
 
             # Update the visualization
             visualizer.update(rgb_env, depth_env, step=count)
-
-            # # Camera logging DEBUG
-            # # print information from the sensors
-            # print("-------------------------------")
-            # print(env.scene["camera"])
-            # print(
-            #     "Received shape of rgb   image: ",
-            #     env.scene["camera"].data.output["rgb"].shape,
-            # )
-            # print(
-            #     "Received shape of depth image: ",
-            #     env.scene["camera"].data.output["distance_to_image_plane"].shape,
-            # )
-            # print("-------------------------------")
 
             # update counter
             count += 1
