@@ -61,8 +61,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     camera_rgb_cfg = CameraCfg(
         prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/rgb_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
-        height=480,
-        width=640,
+        height=720,
+        width=1280,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0,
@@ -79,8 +79,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     camera_depth_cfg = CameraCfg(
         prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/depth_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
-        height=480,
-        width=640,
+        height=720,
+        width=1280,
         data_types=["distance_to_camera"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0,
@@ -195,6 +195,13 @@ class HawUr5Env(DirectRLEnv):
                     0.0 + np.random.uniform(-0.2, 0.2),
                     1.0,
                 )
+                # TODO REMOVE - spawning cube in front for testing
+                random_translation = (
+                    1,
+                    0.0,
+                    1.0,
+                )
+
                 spawn_from_usd(
                     prim_path=env_prim_path,
                     cfg=self.cfg.cube_cfg,
@@ -323,10 +330,15 @@ class HawUr5Env(DirectRLEnv):
         """
         rgb_images_np = rgb_image.cpu().numpy()
         depth_images_np = depth_image.squeeze(-1).cpu().numpy()
+        # Clip and normalize to a 2m range
+        depth_images_np = (np.clip(depth_images_np, a_min=0.0, a_max=2.0)) / (2)
+
+        cube_positions = []
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_image.shape[0]):
             rgb_image_np = rgb_images_np[env_idx]
+            depth_image_np = depth_images_np[env_idx]
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
             lower_red = np.array([0, 100, 100])
@@ -334,9 +346,59 @@ class HawUr5Env(DirectRLEnv):
 
             red_mask = cv2.inRange(hsv, lower_red, upper_red)
 
-            cv2.imwrite(
-                f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png", red_mask
+            # Find contours or the largest connected component (assuming one red cube per env)
+            contours, _ = cv2.findContours(
+                red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
+            if len(contours) == 0:
+                cube_positions.append([-1, -1, -1])
+            else:
+                # Get largest contour
+                largest_contour = max(contours, key=cv2.contourArea)
+                # Shift the contour to the left  to compensate for the offset between the rgb and depth image
+                largest_contour[:, 0, 0] -= 80  # type: ignore
+                # Get the moments of the largest contour
+                M = cv2.moments(largest_contour)
+
+                # Check for zero division
+                if M["m00"] == 0:
+                    cube_positions.append([-1, -1, -1])
+                    continue
+
+                # Get the pixel centroid of the largest contour
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+
+                # Get depth value at the centroid
+                z = depth_image_np[cy, cx]
+
+                # Normalize thee centroid
+                cx = cx / rgb_image_np.shape[0]
+                cy = cy / rgb_image_np.shape[1]
+                cube_positions.append([cx, cy, z])
+
+                # Convert the depth to an 8-bit range
+                depth_vis = (depth_image_np * 255).astype(np.uint8)
+                # Convert single channel depth to 3-channel BGR (for contour drawing)
+                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+
+                # Draw the contour of the rgb to the depth image to viz the offset
+                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+
+                cv2.imwrite(
+                    f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
+                    depth_vis_bgr,
+                )
+
+                # cv2.drawContours(rgb_image_np, contours, -1, (0, 255, 0), 3)
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
+                #     rgb_image_np,
+                # )
+
+        print(f"Cube positions: {cube_positions}")
+
+        return cube_positions
 
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]

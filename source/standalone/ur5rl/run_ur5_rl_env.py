@@ -184,16 +184,17 @@ class RealTimeVisualizer:
         plt.close(self.fig)
 
 
-# SETUP VARS
-elbow_lift = 0.3
+# SETUP VARS ----------------
 args_cli.pub2ros = False
 args_cli.log_data = False
 args_cli.num_envs = 1
 args_cli.pp_setup = True
+# ---------------------------
 
 
 def main():
     """Main function."""
+    elbow_lift = 0.5
 
     ### Get run configurations
     # Check if the user wants to publish the actions to ROS2
@@ -231,8 +232,8 @@ def main():
 
     count = 0
 
-    rgb_shape = (480, 640, 3)  # Replace with the actual shape of your RGB images
-    depth_shape = (480, 640)  # Replace with the actual shape of your Depth images
+    rgb_shape = (720, 1280, 3)  # Replace with the actual shape of your RGB images
+    depth_shape = (720, 1280)  # Replace with the actual shape of your Depth images
     visualizer = RealTimeVisualizer(rgb_shape, depth_shape, save_to_disk=True)
 
     while simulation_app.is_running():
@@ -290,25 +291,29 @@ def main():
             # Step the environment
             obs, rew, terminated, truncated, info = env.step(actions)
 
-            rgb_images = obs["images"]["rgb"]  # type: ignore
-            depth_images = obs["images"]["depth"]  # type: ignore
+            elbow = obs["policy"].cpu().numpy()[0][0][2]
+            if elbow > 1.98:
+                elbow_lift = 0
 
-            # # Print shapes
-            # print(f"RGB Shape: {rgb_images.shape}")
-            # print(f"Depth Shape: {depth_images.shape}")
+            # rgb_images = obs["images"]["rgb"]  # type: ignore
+            # depth_images = obs["images"]["depth"]  # type: ignore
 
-            # Ensure tensors are converted to numpy arrays
-            if isinstance(rgb_images, torch.Tensor):
-                rgb_images = rgb_images.cpu().numpy()
-            if isinstance(depth_images, torch.Tensor):
-                depth_images = depth_images.cpu().numpy()
+            # # # Print shapes
+            # # print(f"RGB Shape: {rgb_images.shape}")
+            # # print(f"Depth Shape: {depth_images.shape}")
 
-            # Extract the first environment's images
-            rgb_env = rgb_images[0]  # First environment's RGB image
-            depth_env = depth_images[0, ..., 0]  # First environment's Depth image
+            # # Ensure tensors are converted to numpy arrays
+            # if isinstance(rgb_images, torch.Tensor):
+            #     rgb_images = rgb_images.cpu().numpy()
+            # if isinstance(depth_images, torch.Tensor):
+            #     depth_images = depth_images.cpu().numpy()
 
-            # Update the visualization
-            visualizer.update(rgb_env, depth_env, step=count)
+            # # Extract the first environment's images
+            # rgb_env = rgb_images[0]  # First environment's RGB image
+            # depth_env = depth_images[0, ..., 0]  # First environment's Depth image
+
+            # # Update the visualization
+            # visualizer.update(rgb_env, depth_env, step=count)
 
             # update counter
             count += 1
