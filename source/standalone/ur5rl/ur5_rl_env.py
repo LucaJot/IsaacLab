@@ -317,6 +317,31 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
+    def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
+        """
+        Deprojects pixel coordinates and depth to a 3D point relative to the same camera.
+
+        :param intrin: A dictionary representing the camera intrinsics.
+                    Example:
+                    {
+                        'fx': float,        # Focal length in x
+                        'fy': float,        # Focal length in y
+                        'cx': float,       # Principal point x
+                        'cy': float,       # Principal point y
+                    }
+        :param pixel: Tuple or list of 2 floats representing the pixel coordinates (x, y).
+        :param depth: Float representing the depth at the given pixel.
+        :return: List of 3 floats representing the 3D point in space.
+        """
+
+        # Calculate normalized coordinates
+        x = (pixel[0] - cx) / fx
+        y = (pixel[1] - cy) / fy
+
+        # Compute 3D point
+        point = [z * x, z * y, z]
+        return point
+
     def get_cube_positions(self, rgb_image: torch.Tensor, depth_image: torch.Tensor):
         """
         Extract positions of red cubes in the camera frame for all environments.
@@ -338,29 +363,30 @@ class HawUr5Env(DirectRLEnv):
         # Get the camera poses relative to world frame
         rgb_poses = self.camera_rgb.data.pos_w.cpu().numpy()
         rgb_poses_q = self.camera_rgb.data.quat_w_world.cpu().numpy()
+        rgb_intrinsic_matrices = self.camera_rgb.data.intrinsic_matrices.cpu().numpy()
         depth_poses = self.camera_depth.data.pos_w.cpu().numpy()
         depth_poses_q = self.camera_depth.data.quat_w_world.cpu().numpy()
 
         robo_rootpose = self.scene.articulations["ur5"].data.root_pos_w.cpu().numpy()
-        robo_rootpose_q = self.scene.articulations["ur5"].data.root_quat_w.cpu().numpy()
         cube_positions = []
+        cube_positions_w = []
+
+        # Make the camera poses relative to the robot base link
+        rel_rgb_poses = rgb_poses - robo_rootpose
+        rel_depth_poses = depth_poses - robo_rootpose
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_image.shape[0]):
             rgb_image_np = rgb_images_np[env_idx]
             depth_image_np = depth_images_np[env_idx]
+            rgb_intrinsic_matrix = rgb_intrinsic_matrices[env_idx]
 
-            # Get the envs camera poses
-            rgb_pose = rgb_poses[env_idx]
-            depth_pose = depth_poses[env_idx]
+            # Get the envs camera poses from base link
+            rgb_pose = rel_rgb_poses[env_idx]
+            depth_pose = rel_depth_poses[env_idx]
             # Make pose relative to base link (z-axis offset)
             rgb_pose[2] -= 0.35
             depth_pose[2] -= 0.35
-
-            # Print env index and camera poses
-            print(f"Env: {env_idx}")
-            print(f"RGB Pose: {rgb_pose}")
-            print(f"Depth Pose: {depth_pose}")
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
             lower_red = np.array([0, 100, 100])
@@ -385,6 +411,7 @@ class HawUr5Env(DirectRLEnv):
                 # Check for zero division and small contours
                 if M["m00"] == 0 or cv2.contourArea(largest_contour) < 1000:
                     cube_positions.append([-1, -1, -1])
+                    cube_positions_w.append([-1, -1, -1])
                     continue
 
                 # Get the pixel centroid of the largest contour
@@ -395,10 +422,23 @@ class HawUr5Env(DirectRLEnv):
                 z = depth_image_np[cy_px, cx_px]
 
                 # TODO Calculate the actual 3D position of the cube
+                #     [fx  0 cx]
+                # K = [ 0 fy cy]
+                #     [ 0  0  1]
+                cube_pos_w = self.deproject_pixel_to_point(
+                    fx=rgb_intrinsic_matrix[0, 0],
+                    fy=rgb_intrinsic_matrix[1, 1],
+                    cx=rgb_intrinsic_matrix[0, 2],
+                    cy=rgb_intrinsic_matrix[1, 2],
+                    pixel=(cx_px, cy_px),
+                    z=z,
+                )
+                cube_positions_w.append(cube_pos_w)
 
                 # Normalize thee centroid
                 cx = cx_px / rgb_image_np.shape[1]
                 cy = cy_px / rgb_image_np.shape[0]
+
                 cube_positions.append([cx, cy, z])
 
                 # Store image with contour drawn -----------------------------------
@@ -424,14 +464,18 @@ class HawUr5Env(DirectRLEnv):
 
                 # --------------------------------------------------------------------
 
-        return np.array(cube_positions)
+        return np.array(cube_positions), np.array(cube_positions_w)
 
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
 
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
-        cube_pos = torch.from_numpy(self.get_cube_positions(rgb, depth)).to(self.device)
+        cube_pos, cube_pos_w = self.get_cube_positions(rgb, depth)
+        cube_pos = torch.from_numpy(cube_pos).to(self.device)
+        cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
+
+        print(f"Cube pos: {cube_pos_w}")
 
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(

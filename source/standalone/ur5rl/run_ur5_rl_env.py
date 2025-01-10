@@ -135,7 +135,7 @@ def sync_sim_joints_with_real_robot(env: HawUr5Env, ur5_controller: Ur5JointCont
 # SETUP VARS ----------------
 args_cli.pub2ros = False
 args_cli.log_data = False
-args_cli.num_envs = 4
+args_cli.num_envs = 1
 args_cli.pp_setup = True
 # ---------------------------
 
