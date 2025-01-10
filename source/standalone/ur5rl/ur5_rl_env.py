@@ -31,7 +31,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     # env
     num_actions = 7
     f_update = 120
-    num_observations = 7
+    num_observations = 27
     num_states = 5
     reward_scale_example = 1.0
     decimation = 2
@@ -65,8 +65,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         width=1280,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
-            focus_distance=400.0,
+            focal_length=24.0,  # 0.188 für Realsense D435
+            focus_distance=30.0,
             horizontal_aperture=20.955,
             clipping_range=(0.1, 1.0e5),
         ),
@@ -84,7 +84,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         data_types=["distance_to_camera"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0,
-            focus_distance=400.0,
+            focus_distance=30.0,
             horizontal_aperture=20.955,
             clipping_range=(0.1, 10),
         ),
@@ -135,7 +135,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        env_spacing=2.5, replicate_physics=True
+        env_spacing=10, replicate_physics=True
     )
 
     # reset conditions
@@ -328,17 +328,39 @@ class HawUr5Env(DirectRLEnv):
         Returns:
             list: A list of arrays containing the positions of red cubes in each environment.
         """
+        CAMERA_RGB_2_D_OFFSET = -75
         rgb_images_np = rgb_image.cpu().numpy()
         depth_images_np = depth_image.squeeze(-1).cpu().numpy()
-        # Clip and normalize to a 2m range
-        depth_images_np = (np.clip(depth_images_np, a_min=0.0, a_max=2.0)) / (2)
 
+        # Clip and normalize to a 1m range
+        depth_images_np = (np.clip(depth_images_np, a_min=0.0, a_max=1.0)) / (1)
+
+        # Get the camera poses relative to world frame
+        rgb_poses = self.camera_rgb.data.pos_w.cpu().numpy()
+        rgb_poses_q = self.camera_rgb.data.quat_w_world.cpu().numpy()
+        depth_poses = self.camera_depth.data.pos_w.cpu().numpy()
+        depth_poses_q = self.camera_depth.data.quat_w_world.cpu().numpy()
+
+        robo_rootpose = self.scene.articulations["ur5"].data.root_pos_w.cpu().numpy()
+        robo_rootpose_q = self.scene.articulations["ur5"].data.root_quat_w.cpu().numpy()
         cube_positions = []
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_image.shape[0]):
             rgb_image_np = rgb_images_np[env_idx]
             depth_image_np = depth_images_np[env_idx]
+
+            # Get the envs camera poses
+            rgb_pose = rgb_poses[env_idx]
+            depth_pose = depth_poses[env_idx]
+            # Make pose relative to base link (z-axis offset)
+            rgb_pose[2] -= 0.35
+            depth_pose[2] -= 0.35
+
+            # Print env index and camera poses
+            print(f"Env: {env_idx}")
+            print(f"RGB Pose: {rgb_pose}")
+            print(f"Depth Pose: {depth_pose}")
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
             lower_red = np.array([0, 100, 100])
@@ -356,39 +378,43 @@ class HawUr5Env(DirectRLEnv):
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
                 # Shift the contour to the left  to compensate for the offset between the rgb and depth image
-                largest_contour[:, 0, 0] -= 80  # type: ignore
+                largest_contour[:, 0, 0] += CAMERA_RGB_2_D_OFFSET  # type: ignore
                 # Get the moments of the largest contour
                 M = cv2.moments(largest_contour)
 
-                # Check for zero division
-                if M["m00"] == 0:
+                # Check for zero division and small contours
+                if M["m00"] == 0 or cv2.contourArea(largest_contour) < 1000:
                     cube_positions.append([-1, -1, -1])
                     continue
 
                 # Get the pixel centroid of the largest contour
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
+                cx_px = int(M["m10"] / M["m00"])
+                cy_px = int(M["m01"] / M["m00"])
 
                 # Get depth value at the centroid
-                z = depth_image_np[cy, cx]
+                z = depth_image_np[cy_px, cx_px]
+
+                # TODO Calculate the actual 3D position of the cube
 
                 # Normalize thee centroid
-                cx = cx / rgb_image_np.shape[0]
-                cy = cy / rgb_image_np.shape[1]
+                cx = cx_px / rgb_image_np.shape[1]
+                cy = cy_px / rgb_image_np.shape[0]
                 cube_positions.append([cx, cy, z])
 
-                # Convert the depth to an 8-bit range
-                depth_vis = (depth_image_np * 255).astype(np.uint8)
-                # Convert single channel depth to 3-channel BGR (for contour drawing)
-                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                # Store image with contour drawn -----------------------------------
 
-                # Draw the contour of the rgb to the depth image to viz the offset
-                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # # Convert the depth to an 8-bit range
+                # depth_vis = (depth_image_np * 255).astype(np.uint8)
+                # # Convert single channel depth to 3-channel BGR (for contour drawing)
+                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
-                cv2.imwrite(
-                    f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
-                    depth_vis_bgr,
-                )
+                # # Draw the contour of the rgb to the depth image to viz the offset
+                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
+                #     depth_vis_bgr,
+                # )
 
                 # cv2.drawContours(rgb_image_np, contours, -1, (0, 255, 0), 3)
                 # cv2.imwrite(
@@ -396,29 +422,29 @@ class HawUr5Env(DirectRLEnv):
                 #     rgb_image_np,
                 # )
 
-        print(f"Cube positions: {cube_positions}")
+                # --------------------------------------------------------------------
 
-        return cube_positions
+        return np.array(cube_positions)
 
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
 
-        # Extract the cubes position from the rgb and depth images
-        self.get_cube_positions(rgb, depth)
+        # Extract the cubes position from the rgb and depth images an convert it to a tensor
+        cube_pos = torch.from_numpy(self.get_cube_positions(rgb, depth)).to(self.device)
 
+        # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
             (
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
-                # rgb,
-                # depth,
+                cube_pos.unsqueeze(dim=1),
             ),
             dim=-1,
         )
-        # print(f"Observation shape: {obs.shape}")
+        # debug_shape = obs.shape
 
         observations = {"policy": obs, "images": {"rgb": rgb, "depth": depth}}
         return observations
