@@ -17,13 +17,15 @@ from omni.isaac.lab.sim.spawners.from_files import (
     spawn_ground_plane,
     spawn_from_usd,
 )
+from omni.isaac.lab.sim.spawners.shapes import spawn_cuboid, CuboidCfg
+from omni.isaac.lab.assets import RigidObject, RigidObjectCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sensors import CameraCfg, Camera
 import numpy as np
 from numpy import float64
 import cv2
 from ultralytics import YOLO
-import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 
 @configclass
@@ -45,7 +47,10 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     action_space = 3
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120,
+        render_interval=decimation,
+    )
 
     # Objects
 
@@ -54,9 +59,29 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         usd_path="omniverse://localhost/MyAssets/Objects/Container.usd",
     )
     # Rigid Object Cube
-    cube_cfg = sim_utils.UsdFileCfg(
-        usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
+
+    cube_cfg = sim_utils.CuboidCfg(
+        size=(0.05, 0.05, 0.05),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(1.0, 0.0, 0.0), metallic=0.2
+        ),
     )
+
+    # cube_cfg = sim_utils.UsdFileCfg(
+    #     usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
+    # )
+
+    cube_rigid_obj = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/Cube",
+        spawn=cube_cfg,
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(1.0, 0.0, 1.0),
+        ),
+    )
+
     # Camera
     camera_rgb_cfg = CameraCfg(
         prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/rgb_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
@@ -179,6 +204,8 @@ class HawUr5Env(DirectRLEnv):
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
+        # self.cubes = []
+
         # Check if the pick and place setup is enabled
         if self.cfg.pp_setup:
             # add container table
@@ -187,26 +214,34 @@ class HawUr5Env(DirectRLEnv):
                 cfg=self.cfg.container_cfg,
                 translation=(0.8, 0.0, 0.0),
             )
-            # Spawn cube with individual randomization for each environment
-            for env_idx in range(self.scene.num_envs):
-                env_prim_path = f"/World/envs/env_{env_idx}/cube"
-                random_translation = (
-                    0.5 + np.random.uniform(-0.1, 0.5),
-                    0.0 + np.random.uniform(-0.2, 0.2),
-                    1.0,
-                )
-                # TODO REMOVE - spawning cube in front for testing
-                random_translation = (
-                    1,
-                    0.0,
-                    1.0,
-                )
 
-                spawn_from_usd(
-                    prim_path=env_prim_path,
-                    cfg=self.cfg.cube_cfg,
-                    translation=random_translation,
-                )
+            self.cubes = spawn_cuboid(
+                prim_path="/World/envs/env_.*/Cube",
+                cfg=self.cfg.cube_cfg,
+                translation=(1.0, 0.0, 1.0),
+            )
+
+            # TODO uncomment if spawn cuboid is not working properly
+            # # Spawn cube with individual randomization for each environment
+            # for env_idx in range(self.scene.num_envs):
+            #     env_prim_path = f"/World/envs/env_{env_idx}/cube"
+            #     random_translation = (
+            #         0.5 + np.random.uniform(-0.1, 0.5),
+            #         0.0 + np.random.uniform(-0.2, 0.2),
+            #         1.0,
+            #     )
+            #     # TODO REMOVE - spawning cube in front for testing
+            #     random_translation = (
+            #         1,
+            #         0.0,
+            #         1.0,
+            #     )
+
+            #     # spawn_from_usd(
+            #     #     prim_path=env_prim_path,
+            #     #     cfg=self.cfg.cube_cfg,
+            #     #     translation=random_translation,
+            #     # )
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False)
@@ -219,6 +254,7 @@ class HawUr5Env(DirectRLEnv):
         self.scene.sensors["camera_rgb"] = self.camera_rgb
         self.camera_depth = Camera(cfg=self.cfg.camera_depth_cfg)
         self.scene.sensors["camera_depth"] = self.camera_depth
+        # self.scene.rigid_objects["cube"] = RigidObject(self.cfg.cube_rigid_obj)
 
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
@@ -342,6 +378,27 @@ class HawUr5Env(DirectRLEnv):
         point = [z * x, z * y, z]
         return point
 
+    def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
+        """
+        Transforms a point from the camera frame to the world frame.
+
+        Args:
+            camera_pos_w (np.ndarray): Position of the camera in the world frame.
+            camera_q_w (np.ndarray): Quaternion of the camera in the world frame.
+            point_cam_rf (np.ndarray): Point in the camera frame.
+
+        Returns:
+            np.ndarray: Point in the world frame.
+        """
+        # Create a Rotation object from the quaternion
+        rotation = R.from_quat(
+            [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
+        )  # Scipy expects [x, y, z, w]
+
+        # Apply rotation and translation
+        p_world = rotation.apply(point_cam_rf) + camera_pos_w
+        return p_world
+
     def get_cube_positions(self, rgb_image: torch.Tensor, depth_image: torch.Tensor):
         """
         Extract positions of red cubes in the camera frame for all environments.
@@ -364,16 +421,13 @@ class HawUr5Env(DirectRLEnv):
         rgb_poses = self.camera_rgb.data.pos_w.cpu().numpy()
         rgb_poses_q = self.camera_rgb.data.quat_w_world.cpu().numpy()
         rgb_intrinsic_matrices = self.camera_rgb.data.intrinsic_matrices.cpu().numpy()
-        depth_poses = self.camera_depth.data.pos_w.cpu().numpy()
-        depth_poses_q = self.camera_depth.data.quat_w_world.cpu().numpy()
 
         robo_rootpose = self.scene.articulations["ur5"].data.root_pos_w.cpu().numpy()
         cube_positions = []
         cube_positions_w = []
 
-        # Make the camera poses relative to the robot base link
+        # Make the camera pose relative to the robot base link
         rel_rgb_poses = rgb_poses - robo_rootpose
-        rel_depth_poses = depth_poses - robo_rootpose
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_image.shape[0]):
@@ -383,10 +437,9 @@ class HawUr5Env(DirectRLEnv):
 
             # Get the envs camera poses from base link
             rgb_pose = rel_rgb_poses[env_idx]
-            depth_pose = rel_depth_poses[env_idx]
+            rgb_pose_q = rgb_poses_q[env_idx]
             # Make pose relative to base link (z-axis offset)
             rgb_pose[2] -= 0.35
-            depth_pose[2] -= 0.35
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
             lower_red = np.array([0, 100, 100])
@@ -398,8 +451,10 @@ class HawUr5Env(DirectRLEnv):
             contours, _ = cv2.findContours(
                 red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
+            # If nothing is found, append -1 coordinates to the list
             if len(contours) == 0:
                 cube_positions.append([-1, -1, -1])
+                cube_positions_w.append([-1, -1, -1])
             else:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
@@ -421,11 +476,11 @@ class HawUr5Env(DirectRLEnv):
                 # Get depth value at the centroid
                 z = depth_image_np[cy_px, cx_px]
 
-                # TODO Calculate the actual 3D position of the cube
+                # Calculate the actual 3D position of the cube relative to the camera sensor
                 #     [fx  0 cx]
                 # K = [ 0 fy cy]
                 #     [ 0  0  1]
-                cube_pos_w = self.deproject_pixel_to_point(
+                cube_pos_camera_rf = self.deproject_pixel_to_point(
                     fx=rgb_intrinsic_matrix[0, 0],
                     fy=rgb_intrinsic_matrix[1, 1],
                     cx=rgb_intrinsic_matrix[0, 2],
@@ -433,13 +488,19 @@ class HawUr5Env(DirectRLEnv):
                     pixel=(cx_px, cy_px),
                     z=z,
                 )
+                # Convert the cube position from camera to world frame
+                cube_pos_w = self.transform_frame_cam2world(
+                    camera_pos_w=rgb_pose,
+                    camera_q_w=rgb_pose_q,
+                    point_cam_rf=cube_pos_camera_rf,
+                )
                 cube_positions_w.append(cube_pos_w)
 
                 # Normalize thee centroid
                 cx = cx_px / rgb_image_np.shape[1]
                 cy = cy_px / rgb_image_np.shape[0]
 
-                cube_positions.append([cx, cy, z])
+                cube_positions.append([z, cx, cy])
 
                 # Store image with contour drawn -----------------------------------
 
@@ -475,7 +536,8 @@ class HawUr5Env(DirectRLEnv):
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
-        print(f"Cube pos: {cube_pos_w}")
+        print(f"Cube world pos: {cube_pos_w}")
+        print(f"Cube pos: {cube_pos}")
 
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
