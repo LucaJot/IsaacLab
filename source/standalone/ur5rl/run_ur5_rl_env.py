@@ -143,6 +143,7 @@ args_cli.pp_setup = True
 def main():
     """Main function."""
     elbow_lift = 0.9
+    wrist1_lift = -0.5
 
     ### Get run configurations
     # Check if the user wants to publish the actions to ROS2
@@ -200,10 +201,10 @@ def main():
                         0.0,
                         0.0,
                         elbow_lift,
+                        wrist1_lift,  # wrist1,
                         0.0,
                         0.0,
-                        0.0,
-                        gripper_action,
+                        -1,  # gripper_action,
                     ]
                 ]
                 * env_cfg.scene.num_envs
@@ -238,8 +239,12 @@ def main():
             obs_vals: torch.Tensor = obs["policy"]  # type: ignore
 
             elbow = obs["policy"].cpu().numpy()[0][0][2]  # type: ignore
-            if elbow > 1.98:
+            wrist1 = obs["policy"].cpu().numpy()[0][0][3]  # type: ignore
+            # print(f"Elbow: {elbow}, Wrist1: {wrist1}")
+            if elbow > 2.0:
                 elbow_lift = 0
+            elif wrist1 < -3.0:
+                wrist1_lift = 0.0
 
             # update counter
             count += 1

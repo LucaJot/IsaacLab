@@ -375,7 +375,7 @@ class HawUr5Env(DirectRLEnv):
         y = (pixel[1] - cy) / fy
 
         # Compute 3D point
-        point = [z * x, z * y, z]
+        point = [z, -z * x, z * y]
         return point
 
     def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
@@ -396,7 +396,7 @@ class HawUr5Env(DirectRLEnv):
         )  # Scipy expects [x, y, z, w]
 
         # Apply rotation and translation
-        p_world = rotation.apply(point_cam_rf) + camera_pos_w
+        p_world = rotation.apply(point_cam_rf) + camera_pos_w  # was +
         return p_world
 
     def get_cube_positions(self, rgb_image: torch.Tensor, depth_image: torch.Tensor):
@@ -439,7 +439,7 @@ class HawUr5Env(DirectRLEnv):
             rgb_pose = rel_rgb_poses[env_idx]
             rgb_pose_q = rgb_poses_q[env_idx]
             # Make pose relative to base link (z-axis offset)
-            rgb_pose[2] -= 0.35
+            # rgb_pose[2] -= 0.35
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
             lower_red = np.array([0, 100, 100])
@@ -473,6 +473,8 @@ class HawUr5Env(DirectRLEnv):
                 cx_px = int(M["m10"] / M["m00"])
                 cy_px = int(M["m01"] / M["m00"])
 
+                print(f"Centroid [px]: {cx_px}/1200, {cy_px}/720")
+
                 # Get depth value at the centroid
                 z = depth_image_np[cy_px, cx_px]
 
@@ -500,7 +502,7 @@ class HawUr5Env(DirectRLEnv):
                 cx = cx_px / rgb_image_np.shape[1]
                 cy = cy_px / rgb_image_np.shape[0]
 
-                cube_positions.append([z, cx, cy])
+                cube_positions.append(cube_pos_camera_rf)
 
                 # Store image with contour drawn -----------------------------------
 
@@ -537,7 +539,7 @@ class HawUr5Env(DirectRLEnv):
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
         print(f"Cube world pos: {cube_pos_w}")
-        print(f"Cube pos: {cube_pos}")
+        print(f"Cube pos camera ref: {cube_pos}")
 
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
