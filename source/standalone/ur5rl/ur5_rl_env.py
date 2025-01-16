@@ -27,6 +27,8 @@ import cv2
 from ultralytics import YOLO
 from scipy.spatial.transform import Rotation as R
 
+from cube_detector import CubeDetector
+
 
 @configclass
 class HawUr5EnvCfg(DirectRLEnvCfg):
@@ -190,6 +192,9 @@ class HawUr5Env(DirectRLEnv):
         self.action_dim = len(self._arm_dof_idx) + len(self._gripper_dof_idx)
 
         self.gripper_action_bin: torch.Tensor | None = None
+
+        # Cube detection
+        self.cubedetector = CubeDetector()
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -534,7 +539,17 @@ class HawUr5Env(DirectRLEnv):
         depth = self.camera_depth.data.output["distance_to_camera"]
 
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
-        cube_pos, cube_pos_w = self.get_cube_positions(rgb, depth)
+
+        cube_pos, cube_pos_w = self.cubedetector.get_cube_positions(
+            rgb_images=rgb.cpu().numpy(),
+            depth_images=depth.squeeze(-1).cpu().numpy(),
+            rgb_camera_poses=self.camera_rgb.data.pos_w.cpu().numpy(),
+            rgb_camera_quats=self.camera_rgb.data.quat_w_world.cpu().numpy(),
+            camera_intrinsics_matrices_k=self.camera_rgb.data.intrinsic_matrices.cpu().numpy(),
+            base_link_poses=self.scene.articulations["ur5"]
+            .data.root_pos_w.cpu()
+            .numpy(),
+        )
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
