@@ -1,3 +1,5 @@
+import rclpy
+from rclpy.node import Node
 import cv2
 import numpy as np
 import torch
@@ -7,10 +9,10 @@ from scipy.spatial.transform import Rotation as R
 class CubeDetector:
     def __init__(self):
         """
-        Initializes the cube detector.
+                Initializes the cube detector.
 
-        Args:
-
+                Args:
+        send_joint_command
         """
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
@@ -67,6 +69,7 @@ class CubeDetector:
         rgb_camera_quats: np.ndarray,
         camera_intrinsics_matrices_k: np.ndarray,
         base_link_poses: np.ndarray,
+        CAMERA_RGB_2_D_OFFSET: int = -75,
     ):
         """
         Extract positions of red cubes in the camera frame for all environments.
@@ -78,7 +81,6 @@ class CubeDetector:
         Returns:
             list: A list of arrays containing the positions of red cubes in each environment.
         """
-        CAMERA_RGB_2_D_OFFSET = -75
         rgb_images_np = rgb_images
         depth_images_np = depth_images
 
@@ -141,7 +143,7 @@ class CubeDetector:
                 cx_px = int(M["m10"] / M["m00"])
                 cy_px = int(M["m01"] / M["m00"])
 
-                print(f"Centroid [px]: {cx_px}/1200, {cy_px}/720")
+                # print(f"Centroid [px]: {cx_px}/1200, {cy_px}/720")
 
                 # Get depth value at the centroid
                 z = depth_image_np[cy_px, cx_px]
@@ -174,24 +176,24 @@ class CubeDetector:
 
                 # Store image with contour drawn -----------------------------------
 
-                # # Convert the depth to an 8-bit range
-                # depth_vis = (depth_image_np * 255).astype(np.uint8)
-                # # Convert single channel depth to 3-channel BGR (for contour drawing)
-                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                # Convert the depth to an 8-bit range
+                depth_vis = (depth_image_np * 255).astype(np.uint8)
+                # Convert single channel depth to 3-channel BGR (for contour drawing)
+                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
-                # # Draw the contour of the rgb to the depth image to viz the offset
-                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # Draw the contour of the rgb to the depth image to viz the offset
+                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
 
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
-                #     depth_vis_bgr,
-                # )
+                cv2.imwrite(
+                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
+                    depth_vis_bgr,
+                )
 
-                # cv2.drawContours(rgb_image_np, contours, -1, (0, 255, 0), 3)
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/maskframe.png",
-                #     rgb_image_np,
-                # )
+                cv2.drawContours(rgb_image_np, contours, -1, (0, 255, 0), 3)
+                cv2.imwrite(
+                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb.png",
+                    rgb_image_np,
+                )
 
                 # --------------------------------------------------------------------
 
