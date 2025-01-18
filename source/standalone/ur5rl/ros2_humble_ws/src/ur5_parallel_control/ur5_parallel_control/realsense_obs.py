@@ -11,7 +11,9 @@ import cv2
 import sys
 import os
 from tf2_ros import Buffer, TransformListener
+from typing import Tuple
 from geometry_msgs.msg import TransformStamped
+from tf2_msgs.msg import TFMessage
 
 # Add the path to the cube_detector module
 sys.path.append(
@@ -23,70 +25,63 @@ from cube_detector import CubeDetector
 
 
 class realsense_obs_reciever(Node):
-    def __init__(self):  # Max v = 35 cm/s
+    def __init__(self):
         super().__init__("realsense_obs_node")
+        self.create_subscription(
+            Image, "/camera/depth/image_aligned_to_rgb", self.depth_callback, 10
+        )
+        self.create_subscription(Image, "/camera/rgb/image_raw", self.rgb_callback, 10)
 
-        # Configure the RealSense pipeline
-        pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
-        config.enable_stream(rs.stream.color, 1280, 720, rs.format.y8, 30)
+        self.create_subscription(
+            CameraInfo, "/camera/rgb/camera_info", self.camera_info_callback, 10
+        )
 
-        self.bridge = CvBridge()
-        self.cubedetector = CubeDetector()
-
-        self.k_matrix: np.ndarray = None
-
-        self.depth_img: np.ndarray = None
-        self.rgb_img: np.ndarray = None
-
-        # Create a buffer and TransformListener
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        self.depth_subscriber = self.create_subscription(
-            Image,
-            "/camera/camera/depth/image_rect_raw",
-            self.depth_img_callback,
-            10,
-        )
+        self.rgb_img: np.ndarray = None
+        self.depth_img: np.ndarray = None
+        self.k_matrix: np.ndarray = None
 
-        self.rgb_subscriber = self.create_subscription(
-            Image,
-            "/camera/camera/color/image_raw",
-            self.rgb_img_callback,
-            10,
-        )
+        self.cubedetector = CubeDetector(real=True)
+        self.bridge = CvBridge()
 
-        self.k_matrix_subscriber = self.create_subscription(  # Camera intrinsics matrix
-            CameraInfo,
-            "/camera/camera/color/camera_info",
-            self.k_matrix_callback,
-            10,
-        )
+        self.create_timer(10.0, self.get_cube_position)
+        self.counter = 0
 
-        self.update_timer = self.create_timer(10, self.get_cube_position)
+    def depth_callback(self, msg):
+        try:
+            # Convert ROS image to OpenCV image in BGR format
+            self.depth_img = self.bridge.imgmsg_to_cv2(
+                msg, desired_encoding="passthrough"
+            )
+        except Exception as e:
+            self.get_logger().error(f"Failed to convert image: {e}")
 
-    def query_transform(self):
+    def rgb_callback(self, msg):
+        try:
+            # Convert ROS image to OpenCV image in BGR format
+            self.rgb_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            # self.rgb_image = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            self.get_logger().error(f"Failed to convert image: {e}")
+
+    def camera_info_callback(self, msg):
+        self.k_matrix = np.array(msg.k).reshape(3, 3)
+
+    def query_transform(self) -> np.array:
         try:
             # Get the transform from parent_frame to child_frame
             transform: TransformStamped = self.tf_buffer.lookup_transform(
-                "base_link",  # Replace with your parent frame
-                "camera_link",  # Replace with your child frame
-                time.Time(),  # Use the latest available transform
+                "base_link",
+                "camera_link",
+                time.Time(seconds=0),  # Use the latest available transform
+                time.Duration(seconds=1),  # Wait for 1 seconds
             )
 
             # Extract translation and rotation
             translation = transform.transform.translation
             rotation = transform.transform.rotation
-
-            # Print the position and orientation
-            # self.get_logger().info(
-            #     f"Position: x={translation.x}, y={translation.y}, z={translation.z}"
-            # )
-            # self.get_logger().info(
-            #     f"Orientation (quaternion): x={rotation.x}, y={rotation.y}, z={rotation.z}, w={rotation.w}"
-            # )
 
             return np.array([translation.x, translation.y, translation.z]), np.array(
                 [rotation.x, rotation.y, rotation.z, rotation.w]
@@ -94,56 +89,14 @@ class realsense_obs_reciever(Node):
 
         except Exception as e:
             self.get_logger().warn(
-                f"Could not transform from parent_frame to child_frame: {e}"
+                f"Could not transform from base_link to camera_link: {e}"
             )
+            return None, None
 
-    def k_matrix_callback(self, msg: Image):
-        camInfo = msg
-        # Store k as 3x3 matrix
-        self.k_matrix = np.array(camInfo.k).reshape((3, 3))  # type: ignore
-        # self.k_matrix = np.array(msg.K).reshape((3, 3))
-
-    def depth_img_callback(self, msg: Image):
-        self.depth_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-
-        clipped_img = np.clip(self.depth_img, a_min=0.0, a_max=1.0)
-        clipped_img = (clipped_img * 255).astype(np.uint8)
-        # cv2.imwrite(
-        #     f"/home/luca/Pictures/isaacsimcameraframes/depth_real.png",
-        #     clipped_img,
-        # )
-
-    def rgb_img_callback(self, msg: Image):
-        self.rgb_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-
-        # cv2.imwrite(
-        #     f"/home/luca/Pictures/isaacsimcameraframes/rgb_real.png",
-        #     self.rgb_image,
-        # )
-
-    def get_depth_img(self) -> np.array:
-        """Get the most recent depth image from the realsense camera
-
-        Returns:
-            np.array: Depth image as np.array
+    def get_cube_position(self):
         """
-        return self.depth_img
-
-    def get_rgb_img(self) -> np.array:
-        """Get the most recent rgb image from the realsense camera
-
-        Returns:
-            np.array: RGB image as np.array
+        Get the 3D position of the cube in the camera frame.
         """
-        return self.rgb_img
-
-    def get_cube_position(self) -> np.array:
-        """Get the 3D position of the cube in the camera frame
-
-        Returns:
-            np.array: 3D position of the cube in the camera frame
-        """
-        # Get relative position of the camera to base_link
         rgb_camera_pose, rgb_camera_quaternion = self.query_transform()
 
         # List of variables with names for logging
@@ -182,8 +135,13 @@ class realsense_obs_reciever(Node):
             CAMERA_RGB_2_D_OFFSET=0,
         )
 
-        # Log the cubes positions
+        self.get_logger().info(
+            f"-------------------Loop {self.counter}-------------------"
+        )
+        self.get_logger().info(f"Cube positions in camera frame: {cube_positions}")
         self.get_logger().info(f"Cube positions in world frame: {cube_positions_w}")
+        self.get_logger().info("------------------------------------------------------")
+        self.counter += 1
         return cube_positions
 
 
