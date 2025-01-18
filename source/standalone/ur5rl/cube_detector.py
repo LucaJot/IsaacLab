@@ -16,6 +16,7 @@ class CubeDetector:
         """
         self.real = real
         self.area_thresh = 2 if real else 1000
+        self.clipping_range = 2000.0 if real else 2.0
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
         """
@@ -39,7 +40,7 @@ class CubeDetector:
         y = (pixel[1] - cy) / fy
 
         # Compute 3D point
-        point = [z, -z * x, z * y]
+        point = [z, -z * x, -z * y]
         return point
 
     def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
@@ -54,13 +55,18 @@ class CubeDetector:
         Returns:
             np.ndarray: Point in the world frame.
         """
-        # Create a Rotation object from the quaternion
-        rotation = R.from_quat(
-            [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
-        )  # Scipy expects [x, y, z, w]
+
+        if self.real:
+            rotation = R.from_quat(camera_q_w)  # Scipy expects [x, y, z, w]
+        else:
+            # TODO CHECK IF THIS IS THE ACTUAL ORDER IN THE SIM OBJECT
+            rotation = R.from_quat(
+                [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
+            )
 
         # Apply rotation and translation
-        p_world = rotation.apply(point_cam_rf) + camera_pos_w  # was +
+        rotated_point = rotation.apply(point_cam_rf)
+        p_world = rotated_point + camera_pos_w  # was +
         return p_world
 
     def get_cube_positions(
@@ -87,7 +93,7 @@ class CubeDetector:
         depth_images_np = depth_images
 
         # Clip and normalize to a 1m range
-        depth_images_np = (np.clip(depth_images_np, a_min=0.0, a_max=1.0)) / (1)
+        depth_images_np = np.clip(depth_images_np, a_min=0.0, a_max=self.clipping_range)
 
         # Get the camera poses relative to world frame
         rgb_poses = rgb_camera_poses
@@ -160,6 +166,10 @@ class CubeDetector:
                 # Get depth value at the centroid
                 z = depth_image_np[cy_px, cx_px]
 
+                if self.real:
+                    # Convert the depth value to meters
+                    z = z / 1000.0
+
                 # Calculate the actual 3D position of the cube relative to the camera sensor
                 #     [fx  0 cx]
                 # K = [ 0 fy cy]
@@ -189,7 +199,9 @@ class CubeDetector:
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
-                depth_vis = (depth_image_np * 255).astype(np.uint8)
+                depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                    np.uint8
+                )
                 # Convert single channel depth to 3-channel BGR (for contour drawing)
                 depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
@@ -197,15 +209,15 @@ class CubeDetector:
                 cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
                 # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
-                cv2.imwrite(
-                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
-                    depth_vis_bgr,
-                )
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
+                #     depth_vis_bgr,
+                # )
 
-                cv2.imwrite(
-                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb.png",
-                    rgb_image_np,
-                )
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb.png",
+                #     rgb_image_np,
+                # )
 
                 # --------------------------------------------------------------------
 
