@@ -7,13 +7,15 @@ from scipy.spatial.transform import Rotation as R
 
 
 class CubeDetector:
-    def __init__(self):
+    def __init__(self, real=False):
         """
                 Initializes the cube detector.
 
                 Args:
         send_joint_command
         """
+        self.real = real
+        self.area_thresh = 2 if real else 1000
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
         """
@@ -69,7 +71,7 @@ class CubeDetector:
         rgb_camera_quats: np.ndarray,
         camera_intrinsics_matrices_k: np.ndarray,
         base_link_poses: np.ndarray,
-        CAMERA_RGB_2_D_OFFSET: int = -75,
+        CAMERA_RGB_2_D_OFFSET: int = -35,
     ):
         """
         Extract positions of red cubes in the camera frame for all environments.
@@ -102,6 +104,9 @@ class CubeDetector:
         # Iterate over the images of all environments
         for env_idx in range(rgb_images.shape[0]):
             rgb_image_np = rgb_images_np[env_idx]
+            # Sim images are in RGB format, real images are in BGR format
+            if not self.real:
+                rgb_image_np = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2BGR)
             depth_image_np = depth_images_np[env_idx]
             rgb_intrinsic_matrix = rgb_intrinsic_matrices[env_idx]
 
@@ -111,11 +116,16 @@ class CubeDetector:
             # Make pose relative to base link (z-axis offset)
             # rgb_pose[2] -= 0.35
 
-            hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_RGB2HSV)
-            lower_red = np.array([0, 100, 100])
-            upper_red = np.array([10, 255, 255])
+            hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_BGR2HSV)
+            lower_red1 = np.array([0, 50, 40])
+            upper_red1 = np.array([10, 255, 255])
+            red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
 
-            red_mask = cv2.inRange(hsv, lower_red, upper_red)
+            lower_red2 = np.array([170, 50, 50])
+            upper_red2 = np.array([180, 255, 255])
+            red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+
+            red_mask = cv2.bitwise_or(red_mask1, red_mask2)
 
             # Find contours or the largest connected component (assuming one red cube per env)
             contours, _ = cv2.findContours(
@@ -133,8 +143,10 @@ class CubeDetector:
                 # Get the moments of the largest contour
                 M = cv2.moments(largest_contour)
 
+                area = cv2.contourArea(largest_contour)
+
                 # Check for zero division and small contours
-                if M["m00"] == 0 or cv2.contourArea(largest_contour) < 1000:
+                if M["m00"] == 0 or area < self.area_thresh:
                     cube_positions.append([-1, -1, -1])
                     cube_positions_w.append([-1, -1, -1])
                     continue
@@ -183,13 +195,13 @@ class CubeDetector:
 
                 # Draw the contour of the rgb to the depth image to viz the offset
                 cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
                 cv2.imwrite(
                     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
                     depth_vis_bgr,
                 )
 
-                cv2.drawContours(rgb_image_np, contours, -1, (0, 255, 0), 3)
                 cv2.imwrite(
                     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb.png",
                     rgb_image_np,
