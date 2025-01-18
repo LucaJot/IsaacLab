@@ -358,51 +358,51 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
-    def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
-        """
-        Deprojects pixel coordinates and depth to a 3D point relative to the same camera.
+    # def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
+    #     """
+    #     Deprojects pixel coordinates and depth to a 3D point relative to the same camera.
 
-        :param intrin: A dictionary representing the camera intrinsics.
-                    Example:
-                    {
-                        'fx': float,        # Focal length in x
-                        'fy': float,        # Focal length in y
-                        'cx': float,       # Principal point x
-                        'cy': float,       # Principal point y
-                    }
-        :param pixel: Tuple or list of 2 floats representing the pixel coordinates (x, y).
-        :param depth: Float representing the depth at the given pixel.
-        :return: List of 3 floats representing the 3D point in space.
-        """
+    #     :param intrin: A dictionary representing the camera intrinsics.
+    #                 Example:
+    #                 {
+    #                     'fx': float,        # Focal length in x
+    #                     'fy': float,        # Focal length in y
+    #                     'cx': float,       # Principal point x
+    #                     'cy': float,       # Principal point y
+    #                 }
+    #     :param pixel: Tuple or list of 2 floats representing the pixel coordinates (x, y).
+    #     :param depth: Float representing the depth at the given pixel.
+    #     :return: List of 3 floats representing the 3D point in space.
+    #     """
 
-        # Calculate normalized coordinates
-        x = (pixel[0] - cx) / fx
-        y = (pixel[1] - cy) / fy
+    #     # Calculate normalized coordinates
+    #     x = (pixel[0] - cx) / fx
+    #     y = (pixel[1] - cy) / fy
 
-        # Compute 3D point
-        point = [z, -z * x, z * y]
-        return point
+    #     # Compute 3D point
+    #     point = [z, -z * x, z * y]
+    #     return point
 
-    def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
-        """
-        Transforms a point from the camera frame to the world frame.
+    # def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
+    #     """
+    #     Transforms a point from the camera frame to the world frame.
 
-        Args:
-            camera_pos_w (np.ndarray): Position of the camera in the world frame.
-            camera_q_w (np.ndarray): Quaternion of the camera in the world frame.
-            point_cam_rf (np.ndarray): Point in the camera frame.
+    #     Args:
+    #         camera_pos_w (np.ndarray): Position of the camera in the world frame.
+    #         camera_q_w (np.ndarray): Quaternion of the camera in the world frame.
+    #         point_cam_rf (np.ndarray): Point in the camera frame.
 
-        Returns:
-            np.ndarray: Point in the world frame.
-        """
-        # Create a Rotation object from the quaternion
-        rotation = R.from_quat(
-            [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
-        )  # Scipy expects [x, y, z, w]
+    #     Returns:
+    #         np.ndarray: Point in the world frame.
+    #     """
+    #     # Create a Rotation object from the quaternion
+    #     rotation = R.from_quat(
+    #         [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
+    #     )  # Scipy expects [x, y, z, w]
 
-        # Apply rotation and translation
-        p_world = rotation.apply(point_cam_rf) + camera_pos_w  # was +
-        return p_world
+    #     # Apply rotation and translation
+    #     p_world = rotation.apply(point_cam_rf) + camera_pos_w  # was +
+    #     return p_world
 
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
