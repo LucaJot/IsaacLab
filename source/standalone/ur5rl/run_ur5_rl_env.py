@@ -142,8 +142,8 @@ args_cli.pp_setup = True
 
 def main():
     """Main function."""
-    elbow_lift = 0.9
-    wrist1_lift = -0.5
+    elbow_lift = 0.0
+    wrist1_lift = 0.0
 
     ### Get run configurations
     # Check if the user wants to publish the actions to ROS2
@@ -181,6 +181,29 @@ def main():
 
     count = 0
 
+    #! Experiment Cube tracking
+    pos1 = [
+        -0.0,
+        -1.1612923781024378,
+        1.98793363571167,
+        -3.9438589254962366,
+        -1.5171125570880335,
+        -0.0027774016009729507,
+        -1.0,
+    ]
+
+    pos2 = [
+        -0.0,
+        -1.1,
+        1.0,
+        -2.25,
+        -1.5171125570880335,
+        -0.0027774016009729507,
+        -1.0,
+    ]
+    pd = [x - y for x, y in zip(pos2, pos1)]
+    pd_step = pd  # [x / 10 for x in pd]
+
     while simulation_app.is_running():
         with torch.inference_mode():
             # reset
@@ -192,20 +215,59 @@ def main():
                 if PUBLISH_2_ROS:
                     sync_sim_joints_with_real_robot(env, ur5_controller)
 
+            #! DEBUG STATEMENT
+            # Set to debug pos
+            # - -1.1613042990313929
+            # - 1.98795747756958
+            # - -3.9438589254962366
+            # - -1.5171244780169886
+            # - -0.0027774016009729507
+            # - -0.005194489155904591
+
+            if count == 0:
+                # Set gripper to cube hight parallel to the table
+                env.set_joint_angles_absolute(
+                    joint_angles=[  # type: ignore
+                        -0.0,
+                        -1.1612923781024378,
+                        1.98793363571167,
+                        -3.9438589254962366,
+                        -1.5171125570880335,
+                        -0.0027774016009729507,
+                        -1.0,
+                    ]
+                )
+                # env.set_joint_angles_absolute(
+                #     joint_angles=[  # type: ignore
+                #         -0.0,
+                #         -1.1,
+                #         1.0,
+                #         -2.25,
+                #         -1.5171125570880335,
+                #         -0.0027774016009729507,
+                #         -1.0,
+                #     ]
+                # )
+            if count > 200 and count < 350:
+                actions = pd_step
+            else:
+                actions = [0.0] * 7
+            #! DEBUG STATEMENT
             # Get test action for the gripper
             gripper_action = -1 + count / 100 % 2
             # create a tensor for joint position targets with 7 values (6 for joints, 1 for gripper)
             actions = torch.tensor(
                 [
-                    [
-                        0.0,
-                        0.0,
-                        elbow_lift,
-                        wrist1_lift,  # wrist1,
-                        0.0,
-                        0.0,
-                        -1,  # gripper_action,
-                    ]
+                    actions
+                    # [
+                    #     0.0,
+                    #     0.0,
+                    #     elbow_lift,
+                    #     wrist1_lift,  # wrist1,
+                    #     0.0,
+                    #     0.0,
+                    #     -1,  # gripper_action,
+                    # ]
                 ]
                 * env_cfg.scene.num_envs
             )

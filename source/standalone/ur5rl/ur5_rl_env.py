@@ -217,13 +217,13 @@ class HawUr5Env(DirectRLEnv):
             spawn_from_usd(
                 prim_path="/World/envs/env_.*/container",
                 cfg=self.cfg.container_cfg,
-                translation=(0.8, 0.0, 0.0),
+                translation=(1.0, 0.0, 0.0),  # usual:(0.8, 0.0, 0.0),
             )
 
             self.cubes = spawn_cuboid(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cube_cfg,
-                translation=(1.0, 0.0, 1.0),
+                translation=(1.0, 0.1, 0.5),
             )
 
             # TODO uncomment if spawn cuboid is not working properly
@@ -425,7 +425,7 @@ class HawUr5Env(DirectRLEnv):
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
         print(f"Cube world pos: {cube_pos_w}")
-        print(f"Cube pos camera ref: {cube_pos}")
+        # print(f"Cube pos camera ref: {cube_pos}")
 
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
