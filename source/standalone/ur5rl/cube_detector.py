@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation as R
 
 
 class CubeDetector:
-    def __init__(self, real=False):
+    def __init__(self, real=False, num_envs=1):
         """
                 Initializes the cube detector.
 
@@ -17,6 +17,17 @@ class CubeDetector:
         self.real = real
         self.area_thresh = 2 if real else 1000
         self.clipping_range = 2000.0 if real else 2.0
+        self.data_age = np.zeros(num_envs)
+        self.last_pos = np.ndarray((num_envs, 3))
+        self.last_pos_w = np.ndarray((num_envs, 3))
+
+    def return_last_pos(self, idx: int):
+        # increase the age of the data by 1 if no cube detected
+        self.data_age[idx] += 1
+        if self.last_pos[idx] is not None and self.last_pos_w[idx] is not None:
+            return self.last_pos[idx], self.last_pos_w[idx]
+        else:
+            return [-1.0, -1.0, -1.0], [-1.0, -1.0, -1.0]
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
         """
@@ -59,7 +70,6 @@ class CubeDetector:
         if self.real:
             rotation = R.from_quat(camera_q_w)  # Scipy expects [x, y, z, w]
         else:
-            # TODO CHECK IF THIS IS THE ACTUAL ORDER IN THE SIM OBJECT
             rotation = R.from_quat(
                 [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
             )
@@ -83,8 +93,8 @@ class CubeDetector:
         Extract positions of red cubes in the camera frame for all environments.
 
         Args:
-            rgb_image (torch.Tensor): RGB image of shape (n, 480, 640, 3).
-            depth_image (torch.Tensor): Depth image of shape (n, 480, 640, 1).
+            rgb_image (np.ndarray): RGB image of shape (n, 480, 640, 3).
+            depth_image (np.ndarray): Depth image of shape (n, 480, 640, 1).
 
         Returns:
             list: A list of arrays containing the positions of red cubes in each environment.
@@ -137,10 +147,11 @@ class CubeDetector:
             contours, _ = cv2.findContours(
                 red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
-            # If nothing is found, append -1 coordinates to the list
+            # If nothing is found, append last valid coordinates to the list
             if len(contours) == 0:
-                cube_positions.append([-1, -1, -1])
-                cube_positions_w.append([-1, -1, -1])
+                pos, pos_w = self.return_last_pos(env_idx)
+                cube_positions.append(pos)
+                cube_positions_w.append(pos_w)
             else:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
@@ -153,8 +164,10 @@ class CubeDetector:
 
                 # Check for zero division and small contours
                 if M["m00"] == 0 or area < self.area_thresh:
-                    cube_positions.append([-1, -1, -1])
-                    cube_positions_w.append([-1, -1, -1])
+                    # If nothing or only small objects are found, append last valid coordinates to the list
+                    pos, pos_w = self.return_last_pos(env_idx)
+                    cube_positions.append(pos)
+                    cube_positions_w.append(pos_w)
                     continue
 
                 # Get the pixel centroid of the largest contour
@@ -196,6 +209,9 @@ class CubeDetector:
 
                 cube_positions.append(cube_pos_camera_rf)
 
+                # Reset the data age for the current env
+                self.data_age[env_idx] = 0
+
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
@@ -220,5 +236,10 @@ class CubeDetector:
                 # )
 
                 # --------------------------------------------------------------------
-
-        return np.array(cube_positions), np.array(cube_positions_w)
+        self.last_pos = cube_positions
+        self.last_pos_w = cube_positions_w
+        return (
+            np.array(cube_positions),
+            np.array(cube_positions_w),
+            np.array(self.data_age),
+        )

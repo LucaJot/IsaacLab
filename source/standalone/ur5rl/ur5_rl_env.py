@@ -194,7 +194,7 @@ class HawUr5Env(DirectRLEnv):
         self.gripper_action_bin: torch.Tensor | None = None
 
         # Cube detection
-        self.cubedetector = CubeDetector()
+        self.cubedetector = CubeDetector(num_envs=self.scene.num_envs)
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -410,7 +410,7 @@ class HawUr5Env(DirectRLEnv):
 
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
 
-        cube_pos, cube_pos_w = self.cubedetector.get_cube_positions(
+        cube_pos, cube_pos_w, data_age = self.cubedetector.get_cube_positions(
             rgb_images=rgb.cpu().numpy(),
             depth_images=depth.squeeze(-1).cpu().numpy(),
             rgb_camera_poses=self.camera_rgb.data.pos_w.cpu().numpy(),
@@ -424,7 +424,7 @@ class HawUr5Env(DirectRLEnv):
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
-        print(f"Cube world pos: {cube_pos_w}")
+        print(f"Cube world pos: {cube_pos_w}, age: {data_age}")
         # print(f"Cube pos camera ref: {cube_pos}")
 
         # Obs of shape [n_envs, 1, 27])
@@ -440,7 +440,11 @@ class HawUr5Env(DirectRLEnv):
         )
         # debug_shape = obs.shape
 
-        observations = {"policy": obs, "images": {"rgb": rgb, "depth": depth}}
+        observations = {
+            "policy": obs,
+            "images": {"rgb": rgb, "depth": depth},
+            "cube_pos": cube_pos_w,
+        }
         return observations
 
     def _get_rewards(self) -> torch.Tensor:

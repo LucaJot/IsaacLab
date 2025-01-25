@@ -125,14 +125,16 @@ class realsense_obs_reciever(Node):
         rgb_camera_poses = np.expand_dims(rgb_camera_pose, axis=0)
         rgb_camera_quaternions = np.expand_dims(rgb_camera_quaternion, axis=0)
 
-        cube_positions, cube_positions_w = self.cubedetector.get_cube_positions(
-            rgb_images=rgb_images,
-            depth_images=depth_images,
-            rgb_camera_poses=rgb_camera_poses,
-            rgb_camera_quats=rgb_camera_quaternions,
-            camera_intrinsics_matrices_k=k_matricies,
-            base_link_poses=baselink_poses,
-            CAMERA_RGB_2_D_OFFSET=0,
+        cube_positions, cube_positions_w, data_age = (
+            self.cubedetector.get_cube_positions(
+                rgb_images=rgb_images,
+                depth_images=depth_images,
+                rgb_camera_poses=rgb_camera_poses,
+                rgb_camera_quats=rgb_camera_quaternions,
+                camera_intrinsics_matrices_k=k_matricies,
+                base_link_poses=baselink_poses,
+                CAMERA_RGB_2_D_OFFSET=0,
+            )
         )
 
         self.get_logger().info(
@@ -142,7 +144,7 @@ class realsense_obs_reciever(Node):
         self.get_logger().info(f"Cube positions in world frame: {cube_positions_w}")
         self.get_logger().info("------------------------------------------------------")
         self.counter += 1
-        return cube_positions
+        return cube_positions, data_age
 
 
 def main(args=None):
