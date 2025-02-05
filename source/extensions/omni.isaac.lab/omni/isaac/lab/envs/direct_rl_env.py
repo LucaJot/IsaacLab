@@ -92,20 +92,26 @@ class DirectRLEnv(gym.Env):
         if self.cfg.seed is not None:
             self.cfg.seed = self.seed(self.cfg.seed)
         else:
-            omni.log.warn("Seed not set for the environment. The environment creation may not be deterministic.")
+            omni.log.warn(
+                "Seed not set for the environment. The environment creation may not be deterministic."
+            )
 
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
         else:
-            raise RuntimeError("Simulation context already exists. Cannot create a new one.")
+            raise RuntimeError(
+                "Simulation context already exists. Cannot create a new one."
+            )
 
         # print useful information
         print("[INFO]: Base environment:")
         print(f"\tEnvironment device    : {self.device}")
         print(f"\tEnvironment seed      : {self.cfg.seed}")
         print(f"\tPhysics step-size     : {self.physics_dt}")
-        print(f"\tRendering step-size   : {self.physics_dt * self.cfg.sim.render_interval}")
+        print(
+            f"\tRendering step-size   : {self.physics_dt * self.cfg.sim.render_interval}"
+        )
         print(f"\tEnvironment step-size : {self.step_dt}")
 
         if self.cfg.sim.render_interval < self.cfg.decimation:
@@ -127,7 +133,9 @@ class DirectRLEnv(gym.Env):
         # FIXME: This needs to be fixed in the future when we unify the UI functionalities even for
         # non-rendering modes.
         if self.sim.render_mode >= self.sim.RenderMode.PARTIAL_RENDERING:
-            self.viewport_camera_controller = ViewportCameraController(self, self.cfg.viewer)
+            self.viewport_camera_controller = ViewportCameraController(
+                self, self.cfg.viewer
+            )
         else:
             self.viewport_camera_controller = None
 
@@ -135,7 +143,9 @@ class DirectRLEnv(gym.Env):
         # note: this activates the physics simulation view that exposes TensorAPIs
         # note: when started in extension mode, first call sim.reset_async() and then initialize the managers
         if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
-            print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
+            print(
+                "[INFO]: Starting the simulation. This may take a few seconds. Please wait..."
+            )
             with Timer("[INFO]: Time taken for simulation start", "simulation_start"):
                 self.sim.reset()
 
@@ -171,22 +181,37 @@ class DirectRLEnv(gym.Env):
         # -- counter for curriculum
         self.common_step_counter = 0
         # -- init buffers
-        self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        self.reset_terminated = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.episode_length_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long
+        )
+        self.reset_terminated = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
         self.reset_time_outs = torch.zeros_like(self.reset_terminated)
-        self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.sim.device)
+        self.reset_goal_reached = torch.zeros_like(self.reset_terminated)
+        self.reset_buf = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.sim.device
+        )
 
         # setup the action and observation spaces for Gym
         self._configure_gym_env_spaces()
 
         # setup noise cfg for adding action and observation noise
         if self.cfg.action_noise_model:
-            self._action_noise_model: NoiseModel = self.cfg.action_noise_model.class_type(
-                self.cfg.action_noise_model, num_envs=self.num_envs, device=self.device
+            self._action_noise_model: NoiseModel = (
+                self.cfg.action_noise_model.class_type(
+                    self.cfg.action_noise_model,
+                    num_envs=self.num_envs,
+                    device=self.device,
+                )
             )
         if self.cfg.observation_noise_model:
-            self._observation_noise_model: NoiseModel = self.cfg.observation_noise_model.class_type(
-                self.cfg.observation_noise_model, num_envs=self.num_envs, device=self.device
+            self._observation_noise_model: NoiseModel = (
+                self.cfg.observation_noise_model.class_type(
+                    self.cfg.observation_noise_model,
+                    num_envs=self.num_envs,
+                    device=self.device,
+                )
             )
 
         # perform events at the start of the simulation
@@ -242,13 +267,17 @@ class DirectRLEnv(gym.Env):
     @property
     def max_episode_length(self):
         """The maximum episode length in steps adjusted from s."""
-        return math.ceil(self.max_episode_length_s / (self.cfg.sim.dt * self.cfg.decimation))
+        return math.ceil(
+            self.max_episode_length_s / (self.cfg.sim.dt * self.cfg.decimation)
+        )
 
     """
     Operations.
     """
 
-    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[VecEnvObs, dict]:
+    def reset(
+        self, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[VecEnvObs, dict]:
         """Resets all the environments and returns observations.
 
         This function calls the :meth:`_reset_idx` function to reset all the environments.
@@ -328,7 +357,10 @@ class DirectRLEnv(gym.Env):
             # render between steps only if the GUI or an RTX sensor needs it
             # note: we assume the render interval to be the shortest accepted rendering interval.
             #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
-            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+            if (
+                self._sim_step_counter % self.cfg.sim.render_interval == 0
+                and is_rendering
+            ):
                 self.sim.render()
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
@@ -361,10 +393,18 @@ class DirectRLEnv(gym.Env):
         # add observation noise
         # note: we apply no noise to the state space (since it is used for critic networks)
         if self.cfg.observation_noise_model:
-            self.obs_buf["policy"] = self._observation_noise_model.apply(self.obs_buf["policy"])
+            self.obs_buf["policy"] = self._observation_noise_model.apply(
+                self.obs_buf["policy"]
+            )
 
         # return observations, rewards, resets and extras
-        return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
+        return (
+            self.obs_buf,
+            self.reward_buf,
+            self.reset_terminated,
+            self.reset_time_outs,
+            self.extras,
+        )
 
     @staticmethod
     def seed(seed: int = -1) -> int:
@@ -433,7 +473,9 @@ class DirectRLEnv(gym.Env):
                     self.cfg.viewer.cam_prim_path, self.cfg.viewer.resolution
                 )
                 # create rgb annotator -- used to read data from the render product
-                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
+                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator(
+                    "rgb", device="cpu"
+                )
                 self._rgb_annotator.attach([self._render_product])
             # obtain the rgb data
             rgb_data = self._rgb_annotator.get_data()
@@ -442,7 +484,10 @@ class DirectRLEnv(gym.Env):
             # return the rgb data
             # note: initially the renerer is warming up and returns empty data
             if rgb_data.size == 0:
-                return np.zeros((self.cfg.viewer.resolution[1], self.cfg.viewer.resolution[0], 3), dtype=np.uint8)
+                return np.zeros(
+                    (self.cfg.viewer.resolution[1], self.cfg.viewer.resolution[0], 3),
+                    dtype=np.uint8,
+                )
             else:
                 return rgb_data[:, :, :3]
         else:
@@ -494,7 +539,9 @@ class DirectRLEnv(gym.Env):
             if self._debug_vis_handle is None:
                 app_interface = omni.kit.app.get_app_interface()
                 self._debug_vis_handle = app_interface.get_post_update_event_stream().create_subscription_to_pop(
-                    lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(event)
+                    lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(
+                        event
+                    )
                 )
         else:
             # remove the subscriber if it exists
@@ -512,7 +559,9 @@ class DirectRLEnv(gym.Env):
         """Configure the action and observation spaces for the Gym environment."""
         # show deprecation message and overwrite configuration
         if self.cfg.num_actions is not None:
-            omni.log.warn("DirectRLEnvCfg.num_actions is deprecated. Use DirectRLEnvCfg.action_space instead.")
+            omni.log.warn(
+                "DirectRLEnvCfg.num_actions is deprecated. Use DirectRLEnvCfg.action_space instead."
+            )
             if isinstance(self.cfg.action_space, type(MISSING)):
                 self.cfg.action_space = self.cfg.num_actions
         if self.cfg.num_observations is not None:
@@ -522,27 +571,44 @@ class DirectRLEnv(gym.Env):
             if isinstance(self.cfg.observation_space, type(MISSING)):
                 self.cfg.observation_space = self.cfg.num_observations
         if self.cfg.num_states is not None:
-            omni.log.warn("DirectRLEnvCfg.num_states is deprecated. Use DirectRLEnvCfg.state_space instead.")
+            omni.log.warn(
+                "DirectRLEnvCfg.num_states is deprecated. Use DirectRLEnvCfg.state_space instead."
+            )
             if isinstance(self.cfg.state_space, type(MISSING)):
                 self.cfg.state_space = self.cfg.num_states
 
         # set up spaces
         self.single_observation_space = gym.spaces.Dict()
-        self.single_observation_space["policy"] = spec_to_gym_space(self.cfg.observation_space)
+        self.single_observation_space["policy"] = spec_to_gym_space(
+            self.cfg.observation_space
+        )
         self.single_action_space = spec_to_gym_space(self.cfg.action_space)
 
         # batch the spaces for vectorized environments
-        self.observation_space = gym.vector.utils.batch_space(self.single_observation_space["policy"], self.num_envs)
-        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
+        self.observation_space = gym.vector.utils.batch_space(
+            self.single_observation_space["policy"], self.num_envs
+        )
+        self.action_space = gym.vector.utils.batch_space(
+            self.single_action_space, self.num_envs
+        )
 
         # optional state space for asymmetric actor-critic architectures
         self.state_space = None
         if self.cfg.state_space:
-            self.single_observation_space["critic"] = spec_to_gym_space(self.cfg.state_space)
-            self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
+            self.single_observation_space["critic"] = spec_to_gym_space(
+                self.cfg.state_space
+            )
+            self.state_space = gym.vector.utils.batch_space(
+                self.single_observation_space["critic"], self.num_envs
+            )
 
         # instantiate actions (needed for tasks for which the observations computation is dependent on the actions)
-        self.actions = sample_space(self.single_action_space, self.sim.device, batch_size=self.num_envs, fill_value=0)
+        self.actions = sample_space(
+            self.single_action_space,
+            self.sim.device,
+            batch_size=self.num_envs,
+            fill_value=0,
+        )
 
     def _reset_idx(self, env_ids: Sequence[int]):
         """Reset environments based on specified indices.
@@ -556,7 +622,9 @@ class DirectRLEnv(gym.Env):
         if self.cfg.events:
             if "reset" in self.event_manager.available_modes:
                 env_step_count = self._sim_step_counter // self.cfg.decimation
-                self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
+                self.event_manager.apply(
+                    mode="reset", env_ids=env_ids, global_env_step_count=env_step_count
+                )
 
         # reset noise models
         if self.cfg.action_noise_model:
@@ -593,7 +661,9 @@ class DirectRLEnv(gym.Env):
         Args:
             actions: The actions to apply on the environment. Shape is (num_envs, action_dim).
         """
-        raise NotImplementedError(f"Please implement the '_pre_physics_step' method for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Please implement the '_pre_physics_step' method for {self.__class__.__name__}."
+        )
 
     @abstractmethod
     def _apply_action(self):
@@ -602,7 +672,9 @@ class DirectRLEnv(gym.Env):
         This function is responsible for applying the actions to the simulator. It is called at each
         physics time-step.
         """
-        raise NotImplementedError(f"Please implement the '_apply_action' method for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Please implement the '_apply_action' method for {self.__class__.__name__}."
+        )
 
     @abstractmethod
     def _get_observations(self) -> VecEnvObs:
@@ -611,7 +683,9 @@ class DirectRLEnv(gym.Env):
         Returns:
             The observations for the environment.
         """
-        raise NotImplementedError(f"Please implement the '_get_observations' method for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Please implement the '_get_observations' method for {self.__class__.__name__}."
+        )
 
     def _get_states(self) -> VecEnvObs | None:
         """Compute and return the states for the environment.
@@ -632,7 +706,9 @@ class DirectRLEnv(gym.Env):
         Returns:
             The rewards for the environment. Shape is (num_envs,).
         """
-        raise NotImplementedError(f"Please implement the '_get_rewards' method for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Please implement the '_get_rewards' method for {self.__class__.__name__}."
+        )
 
     @abstractmethod
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -642,7 +718,9 @@ class DirectRLEnv(gym.Env):
             A tuple containing the done flags for termination and time-out.
             Shape of individual tensors is (num_envs,).
         """
-        raise NotImplementedError(f"Please implement the '_get_dones' method for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Please implement the '_get_dones' method for {self.__class__.__name__}."
+        )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         """Set debug visualization into visualization objects.
@@ -651,4 +729,6 @@ class DirectRLEnv(gym.Env):
         and input ``debug_vis`` is True. If the visualization objects exist, the function should
         set their visibility into the stage.
         """
-        raise NotImplementedError(f"Debug visualization is not implemented for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Debug visualization is not implemented for {self.__class__.__name__}."
+        )

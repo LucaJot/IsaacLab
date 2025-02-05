@@ -37,14 +37,22 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     num_observations = 27
     num_states = 5
-    reward_scale_example = 1.0
+
+    alive_reward_scaling = -0.1
+    terminated_penalty_scaling = -1.0
+    vel_penalty_scaling = -0.01
+    torque_penalty_scaling = -0.01
+    cube_out_of_sight_penalty_scaling = -0.1
+    distance_cube_to_goal_penalty_scaling = -0.1
+    goal_reached_scaling = 2.0
+
     decimation = 2
     action_scale = 1.0
     v_cm = 35  # cm/s
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
 
-    episode_length_s = 120
+    episode_length_s = 10
     observation_space = 7
     action_space = 3
 
@@ -175,7 +183,13 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 class HawUr5Env(DirectRLEnv):
     cfg: HawUr5EnvCfg
 
-    def __init__(self, cfg: HawUr5EnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(
+        self,
+        cfg: HawUr5EnvCfg,
+        render_mode: str | None = None,
+        cube_goal_pos: list = [1.0, -0.1, 0.8],
+        **kwargs,
+    ):
         super().__init__(cfg, render_mode, **kwargs)
 
         self._arm_dof_idx, _ = self.robot.find_joints(self.cfg.arm_dof_name)
@@ -186,6 +200,7 @@ class HawUr5Env(DirectRLEnv):
         # Holds the current joint positions and velocities
         self.live_joint_pos: torch.Tensor = self.robot.data.joint_pos
         self.live_joint_vel: torch.Tensor = self.robot.data.joint_vel
+        self.live_joint_torque: torch.Tensor = self.robot.data.applied_torque
 
         self.jointpos_script_GT: torch.Tensor = self.live_joint_pos[:, :].clone()
 
@@ -195,6 +210,14 @@ class HawUr5Env(DirectRLEnv):
 
         # Cube detection
         self.cubedetector = CubeDetector(num_envs=self.scene.num_envs)
+        # Convert the cube goal position to a tensor
+        self.cube_goal_pos = torch.FloatTensor(cube_goal_pos).to(self.device)
+        # Expand the cube goal position to match the number of environments
+        self.cube_goal_pos = self.cube_goal_pos.expand(cfg.scene.num_envs, -1)
+
+        self.data_age = torch.zeros(self.scene.num_envs, device=self.device)
+        self.cube_distance_to_goal = torch.ones(self.scene.num_envs, device=self.device)
+        self.goal_reached = torch.zeros(self.scene.num_envs, device=self.device)
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -209,8 +232,6 @@ class HawUr5Env(DirectRLEnv):
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
 
-        # self.cubes = []
-
         # Check if the pick and place setup is enabled
         if self.cfg.pp_setup:
             # add container table
@@ -223,30 +244,8 @@ class HawUr5Env(DirectRLEnv):
             self.cubes = spawn_cuboid(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cube_cfg,
-                translation=(1.0, 0.1, 0.5),
+                translation=(1.0, 0.1, 0.8),
             )
-
-            # TODO uncomment if spawn cuboid is not working properly
-            # # Spawn cube with individual randomization for each environment
-            # for env_idx in range(self.scene.num_envs):
-            #     env_prim_path = f"/World/envs/env_{env_idx}/cube"
-            #     random_translation = (
-            #         0.5 + np.random.uniform(-0.1, 0.5),
-            #         0.0 + np.random.uniform(-0.2, 0.2),
-            #         1.0,
-            #     )
-            #     # TODO REMOVE - spawning cube in front for testing
-            #     random_translation = (
-            #         1,
-            #         0.0,
-            #         1.0,
-            #     )
-
-            #     # spawn_from_usd(
-            #     #     prim_path=env_prim_path,
-            #     #     cfg=self.cfg.cube_cfg,
-            #     #     translation=random_translation,
-            #     # )
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False)
@@ -358,52 +357,6 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
-    # def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
-    #     """
-    #     Deprojects pixel coordinates and depth to a 3D point relative to the same camera.
-
-    #     :param intrin: A dictionary representing the camera intrinsics.
-    #                 Example:
-    #                 {
-    #                     'fx': float,        # Focal length in x
-    #                     'fy': float,        # Focal length in y
-    #                     'cx': float,       # Principal point x
-    #                     'cy': float,       # Principal point y
-    #                 }
-    #     :param pixel: Tuple or list of 2 floats representing the pixel coordinates (x, y).
-    #     :param depth: Float representing the depth at the given pixel.
-    #     :return: List of 3 floats representing the 3D point in space.
-    #     """
-
-    #     # Calculate normalized coordinates
-    #     x = (pixel[0] - cx) / fx
-    #     y = (pixel[1] - cy) / fy
-
-    #     # Compute 3D point
-    #     point = [z, -z * x, z * y]
-    #     return point
-
-    # def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
-    #     """
-    #     Transforms a point from the camera frame to the world frame.
-
-    #     Args:
-    #         camera_pos_w (np.ndarray): Position of the camera in the world frame.
-    #         camera_q_w (np.ndarray): Quaternion of the camera in the world frame.
-    #         point_cam_rf (np.ndarray): Point in the camera frame.
-
-    #     Returns:
-    #         np.ndarray: Point in the world frame.
-    #     """
-    #     # Create a Rotation object from the quaternion
-    #     rotation = R.from_quat(
-    #         [camera_q_w[1], camera_q_w[2], camera_q_w[3], camera_q_w[0]]
-    #     )  # Scipy expects [x, y, z, w]
-
-    #     # Apply rotation and translation
-    #     p_world = rotation.apply(point_cam_rf) + camera_pos_w  # was +
-    #     return p_world
-
     def _get_observations(self) -> dict:
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
@@ -424,58 +377,30 @@ class HawUr5Env(DirectRLEnv):
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
 
-        print(f"Cube world pos: {cube_pos_w}, age: {data_age}")
-        # print(f"Cube pos camera ref: {cube_pos}")
+        # Compute distance cube position to goal position
+        self.data_age = torch.tensor(data_age, device=self.device)
+        self.cube_distance_to_goal = torch.norm(
+            cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=True
+        )
 
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
             (
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
+                self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 cube_pos.unsqueeze(dim=1),
+                self.cube_distance_to_goal.unsqueeze(dim=1),
+                self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
             ),
             dim=-1,
         )
         # debug_shape = obs.shape
 
-        observations = {
-            "policy": obs,
-            "images": {"rgb": rgb, "depth": depth},
-            "cube_pos": cube_pos_w,
-        }
+        observations = {"policy": obs}
         return observations
-
-    def _get_rewards(self) -> torch.Tensor:
-        total_reward = torch.zeros(1, device=self.device)
-        return total_reward
-
-    def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        out_of_bounds = torch.zeros(1, device=self.device)
-        time_out = torch.zeros(1, device=self.device)
-        return out_of_bounds, time_out
-
-    def _reset_idx(self, env_ids: Sequence[int] | None):
-        if env_ids is None:
-            env_ids = self.robot._ALL_INDICES  # type: ignore
-
-        # General resetting tasks (timers etc.)
-        super()._reset_idx(env_ids)  # type: ignore
-
-        joint_pos = self.robot.data.default_joint_pos[env_ids]
-        # Domain randomization (TODO make sure states are safe)
-        joint_pos += torch.rand_like(joint_pos) * 0.1
-
-        joint_vel = self.robot.data.default_joint_vel[env_ids]
-
-        default_root_state = self.robot.data.default_root_state[env_ids]
-
-        self.live_joint_pos[env_ids] = joint_pos
-        self.live_joint_vel[env_ids] = joint_vel
-        # self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
-        self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
     def set_joint_angles_absolute(self, joint_angles: list[float64]) -> bool:
         try:
@@ -512,34 +437,97 @@ class HawUr5Env(DirectRLEnv):
             return T_all_joint_pos
         return None
 
+    def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        time_out = self.episode_length_buf >= self.max_episode_length - 1
+        out_of_bounds = torch.zeros_like(time_out, device=self.device)
+        # position reached
+        goal_reached = torch.where(
+            self.cube_distance_to_goal.squeeze() < 0.05,
+            torch.tensor(1, device=self.device),
+            torch.tensor(0, device=self.device),
+        )
+        reset_terminated = out_of_bounds | goal_reached
+        return reset_terminated, time_out
 
-"""
-Gripper steering function info
+    def _reset_idx(self, env_ids: Sequence[int] | None):
+        if env_ids is None:
+            env_ids = self.robot._ALL_INDICES  # type: ignore
 
-        def gripper_steer(
-    action: float, stepsize: float, current_joints: list[float]
+        # General resetting tasks (timers etc.)
+        super()._reset_idx(env_ids)  # type: ignore
+
+        joint_pos = self.robot.data.default_joint_pos[env_ids]
+        # Domain randomization (TODO make sure states are safe)
+        joint_pos += torch.rand_like(joint_pos) * 0.1
+
+        joint_vel = self.robot.data.default_joint_vel[env_ids]
+
+        default_root_state = self.robot.data.default_root_state[env_ids]
+
+        self.live_joint_pos[env_ids] = joint_pos
+        self.live_joint_vel[env_ids] = joint_vel
+        # self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
+        self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
+        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+    def _get_rewards(self) -> torch.Tensor:
+        total_reward = compute_rewards(
+            self.cfg.alive_reward_scaling,
+            self.reset_terminated,
+            self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
+            self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
+            self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
+            self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
+            self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
+            self.cfg.vel_penalty_scaling,
+            self.cfg.torque_penalty_scaling,
+            self.data_age.unsqueeze(dim=1),
+            self.cfg.cube_out_of_sight_penalty_scaling,
+            self.cube_distance_to_goal.unsqueeze(dim=1),
+            self.cfg.distance_cube_to_goal_penalty_scaling,
+            self.goal_reached.unsqueeze(dim=1),
+            self.cfg.goal_reached_scaling,
+        )
+        return total_reward
+
+
+@torch.jit.script
+def compute_rewards(
+    aliverewardscale: float,
+    reset_terminated: torch.Tensor,
+    arm_joint_pos: torch.Tensor,
+    arm_joint_vel: torch.Tensor,
+    arm_joint_torque: torch.Tensor,
+    gripper_joint_pos: torch.Tensor,
+    gripper_joint_vel: torch.Tensor,
+    vel_penalty_scaling: float,
+    torque_penalty_scaling: float,
+    data_age: torch.Tensor,
+    cube_out_of_sight_penalty_scaling: float,
+    distance_cube_to_goal_pos: torch.Tensor,
+    distance_cube_to_goal_penalty_scaling: float,
+    goal_reached: torch.Tensor,
+    goal_reached_scaling: float,
 ) -> torch.Tensor:
-    Steer the individual gripper joints.
-       This function translates a single action
-       between -1 and 1 to the gripper joint position targets.
-       value to the gripper joint position targets.
 
-    Args:
-        action (float): Action to steer the gripper.
-
-    Returns:
-        torch.Tensor: Gripper joint position targets.
-
-    # create joint position targets
-    gripper_joint_pos = torch.tensor(
-        [
-            36 * action,  # "left_outer_knuckle_joint",
-            -36 * action,  # "left_inner_finger_joint",
-            -36 * action,  # "left_inner_knuckle_joint",
-            -36 * action,  # "right_inner_knuckle_joint",
-            36 * action,  # "right_outer_knuckle_joint",
-            36 * action,  # "right_inner_finger_joint",
-        ]
+    penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
+    penalty_vel = vel_penalty_scaling * torch.sum(torch.abs(arm_joint_vel), dim=-1)
+    penalty_cube_out_of_sight = cube_out_of_sight_penalty_scaling * data_age
+    penalty_distance_cube_to_goal = (
+        distance_cube_to_goal_penalty_scaling * distance_cube_to_goal_pos
     )
-    return gripper_joint_pos
-        """
+    torque_penalty = torque_penalty_scaling * torch.sum(
+        torch.abs(arm_joint_torque), dim=-1
+    )
+    goal_reached_reward = goal_reached_scaling * goal_reached
+
+    reward = (
+        penalty_alive
+        + penalty_vel
+        + penalty_cube_out_of_sight
+        + penalty_distance_cube_to_goal
+        + goal_reached_reward
+        + torque_penalty
+    )
+    print(f"Reward: {reward}")
+    return reward

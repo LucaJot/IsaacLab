@@ -166,16 +166,12 @@ args_cli.pp_setup = True
 # ---------------------------
 
 
+# import isaaclab_tasks  # noqa: F401
+# from isaaclab_tasks.utils import parse_env_cfg
+
+
 def main():
     """Main function."""
-    elbow_lift = -0.2
-    wrist1_lift = 0.0
-
-    ### Get run configurations
-    # Check if the user wants to publish the actions to ROS2
-    PUBLISH_2_ROS = args_cli.pub2ros
-    # Check if the user wants to log the joint data
-    LOG_DATA = args_cli.log_data
 
     # create environment configuration
     env_cfg = HawUr5EnvCfg()
@@ -183,52 +179,12 @@ def main():
     env_cfg.pp_setup = True  # args_cli.pp_setup
     # setup RL environment
     env = HawUr5Env(cfg=env_cfg)
+    print(env.max_episode_length)
     env.camera_rgb.reset()
     env.camera_depth.reset()
 
-    if PUBLISH_2_ROS:
-        # ROS 2 initialization
-        rclpy.init()
-        ur5_controller = Ur5JointController()
-        # Start the ROS node in a separate thread
-        ros_thread = threading.Thread(
-            target=ros_node_thread, args=(ur5_controller,), daemon=True
-        )
-        ros_thread.start()
-
-    if LOG_DATA:
-        # Initialize datalogger
-        logger = InfluxDataLogger(
-            org="haw",
-            influx_url="http://localhost:8086",
-            run_info="Using ground truth in script and updating it on strong deviations. Sending elbow lift command. Same update parameters for both sim and real.",
-            action_scaling=env.action_scale,
-        )
-
+    # Wrap the environment in a gym wrapper
     count = 0
-
-    #! Experiment Cube tracking
-    pos1 = [
-        -0.0,
-        -1.1612923781024378,
-        1.98793363571167,
-        -3.9438589254962366,
-        -1.5171125570880335,
-        -0.0027774016009729507,
-        -1.0,
-    ]
-
-    pos2 = [
-        -0.0,
-        -1.1,
-        1.0,
-        -2.25,
-        -1.5171125570880335,
-        -0.0027774016009729507,
-        -1.0,
-    ]
-    pd = [x - y for x, y in zip(pos2, pos1)]
-    pd_step = [x / 4 for x in pd]
 
     while simulation_app.is_running():
         with torch.inference_mode():
@@ -238,97 +194,16 @@ def main():
                 # env.reset()
                 print("-" * 80)
                 print("[INFO]: Env reset.")
-                if PUBLISH_2_ROS:
-                    sync_sim_joints_with_real_robot(env, ur5_controller)
-
-            #! DEBUG STATEMENT ----------------
-            if count == 0:
-                # Set gripper to cube hight parallel to the table
-                env.set_joint_angles_absolute(joint_angles=pos1)  # type: ignore
-            if count > 500 and count < 1100:
-                actions = pd_step
-            else:
-                actions = [0.0] * 7
-            #! ^^^DEBUG STATEMENT^^^ ----------
-            # Get test action for the gripper
-            gripper_action = -1 + count / 100 % 2
-            # create a tensor for joint position targets with 7 values (6 for joints, 1 for gripper)
-            actions = torch.tensor(
-                [
-                    # actions
-                    [
-                        0.0,
-                        0.0,
-                        elbow_lift,
-                        wrist1_lift,  # wrist1,
-                        0.0,
-                        0.0,
-                        -1,  # gripper_action,
-                    ]
-                ]
-                * env_cfg.scene.num_envs
-            )
-
-            # Control real robot and setup logging
-            if PUBLISH_2_ROS:
-                # Send ros actions to the real robot
-                ur5_controller.set_joint_delta(actions[0, :7].numpy())  # type: ignore
-                real_joint_positions = ur5_controller.get_joint_positions()
-                bucket = "simrealjointdata"
-            # If not publishing to ROS, set real joint positions to None and switch to sim data bucket
-            elif LOG_DATA:
-                real_joint_positions = None
-                bucket = "simjointdata"
-
-            # Log the joint positions
-            if LOG_DATA:
-                sim_joint_positions = env.get_sim_joint_positions()
-                if sim_joint_positions is not None:
-                    sim_joint_positions = sim_joint_positions.squeeze().tolist()
-                    store_joint_positions(
-                        logger=logger,
-                        sim=sim_joint_positions,
-                        real=real_joint_positions,
-                        bucket=bucket,
-                    )
-
             # Step the environment
+            # take random actions
+            actions = torch.rand(args_cli.num_envs, 7) * 2 - 1
             obs, rew, terminated, truncated, info = env.step(actions)
-
-            goal_dist = obs["distance_to_goal"].cpu().numpy().tolist()
-            obs_vals: torch.Tensor = obs["policy"]  # type: ignore
-
-            print(f"Step: {count}: Cube Distances {goal_dist}\n")
-            print(f"Obs: {obs_vals}")
-
-            # Log the cube positions
-            if LOG_DATA:
-                if count > 500 and count < 1100:
-                    cube_position_tracked = obs["cube_pos"][0].cpu().numpy().tolist()
-                    store_cube_positions(
-                        logger=logger,
-                        cube_position_tracked=cube_position_tracked,
-                        cube_position_gt=[1.0, 0.1, 0.25],
-                        bucket="cube_pos",
-                    )
-
-            obs_vals: torch.Tensor = obs["policy"]  # type: ignore
-
-            elbow = obs["policy"].cpu().numpy()[0][0][2]  # type: ignore
-            wrist1 = obs["policy"].cpu().numpy()[0][0][3]  # type: ignore
-            # print(f"Elbow: {elbow}, Wrist1: {wrist1}")
-            if elbow > 2.0:
-                elbow_lift = 0
-            elif wrist1 < -3.0:
-                wrist1_lift = 0.0
 
             # update counter
             count += 1
 
     # close the environment
     env.close()
-    if LOG_DATA:
-        logger.close()
 
     # Shutdown ROS 2 (if initialized)
     # rclpy.shutdown()
