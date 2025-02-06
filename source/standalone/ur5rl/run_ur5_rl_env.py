@@ -66,7 +66,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
-from ur5_rl_env import HawUr5EnvCfg, HawUr5Env
+from ur5_rl_env_standalone import HawUr5EnvCfg, HawUr5Env
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
@@ -161,7 +161,7 @@ def check_cube_deviation(cube_position_sim: list, cube_position_real: list):
 # SETUP VARS ----------------
 args_cli.pub2ros = False
 args_cli.log_data = False
-args_cli.num_envs = 5
+args_cli.num_envs = 1
 args_cli.pp_setup = True
 # ---------------------------
 
@@ -255,16 +255,16 @@ def main():
             # create a tensor for joint position targets with 7 values (6 for joints, 1 for gripper)
             actions = torch.tensor(
                 [
-                    # actions
-                    [
-                        0.0,
-                        0.0,
-                        elbow_lift,
-                        wrist1_lift,  # wrist1,
-                        0.0,
-                        0.0,
-                        -1,  # gripper_action,
-                    ]
+                    actions
+                    # [
+                    #     0.0,
+                    #     0.0,
+                    #     elbow_lift,
+                    #     wrist1_lift,  # wrist1,
+                    #     0.0,
+                    #     0.0,
+                    #     -1,  # gripper_action,
+                    # ]
                 ]
                 * env_cfg.scene.num_envs
             )
@@ -295,11 +295,13 @@ def main():
             # Step the environment
             obs, rew, terminated, truncated, info = env.step(actions)
 
-            goal_dist = obs["distance_to_goal"].cpu().numpy().tolist()
+            # goal_dist = obs["distance_to_goal"].cpu().numpy().tolist()
             obs_vals: torch.Tensor = obs["policy"]  # type: ignore
+            # Print cube positions
+            cube_position_tracked = obs["cube_pos"].cpu().numpy().tolist()
 
-            print(f"Step: {count}: Cube Distances {goal_dist}\n")
-            print(f"Obs: {obs_vals}")
+            # print(f"Step: {count}: Cube Distances {goal_dist}\n")
+            print(f"Cube pos tracked: {cube_position_tracked}")
 
             # Log the cube positions
             if LOG_DATA:
