@@ -188,16 +188,11 @@ def main():
 
     while simulation_app.is_running():
         with torch.inference_mode():
-            # reset
-            if count % 1000000 == 0:
-                count = 0
-                # env.reset()
-                print("-" * 80)
-                print("[INFO]: Env reset.")
             # Step the environment
             # take random actions
             actions = torch.rand(args_cli.num_envs, 7) * 2 - 1
             obs, rew, terminated, truncated, info = env.step(actions)
+            print(truncated)
 
             # update counter
             count += 1

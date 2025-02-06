@@ -52,7 +52,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
 
-    episode_length_s = 10
+    episode_length_s = 3
     observation_space = 7
     action_space = 3
 
@@ -188,6 +188,10 @@ class HawUr5Env(DirectRLEnv):
         cfg: HawUr5EnvCfg,
         render_mode: str | None = None,
         cube_goal_pos: list = [1.0, -0.1, 0.8],
+        joint_init_state: torch.Tensor = torch.tensor(
+            [0.0, -1.92, 1.92, -3.14, -1.57, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            device="cuda:0",
+        ),
         **kwargs,
     ):
         super().__init__(cfg, render_mode, **kwargs)
@@ -196,6 +200,8 @@ class HawUr5Env(DirectRLEnv):
         self._gripper_dof_idx, _ = self.robot.find_joints(self.cfg.gripper_dof_name)
         self.haw_ur5_dof_idx, _ = self.robot.find_joints(self.cfg.haw_ur5_dof_name)
         self.action_scale = self.cfg.action_scale
+        self.joint_init_state = joint_init_state.repeat(self.scene.num_envs, 1)
+        self.robot.data.default_joint_pos = self.joint_init_state
 
         # Holds the current joint positions and velocities
         self.live_joint_pos: torch.Tensor = self.robot.data.joint_pos
@@ -402,26 +408,6 @@ class HawUr5Env(DirectRLEnv):
         observations = {"policy": obs}
         return observations
 
-    def set_joint_angles_absolute(self, joint_angles: list[float64]) -> bool:
-        try:
-            # Set arm joint angles from list
-            T_arm_angles = torch.tensor(joint_angles[:6], device=self.device)
-            T_arm_angles = T_arm_angles.unsqueeze(1)
-            # Set gripper joint angles from list
-            T_arm_angles = torch.transpose(T_arm_angles, 0, 1)
-
-            default_velocities = self.robot.data.default_joint_vel
-
-            # self.joint_pos = T_angles
-            # self.joint_vel = default_velocities
-            print(f"Setting joint angles to: {T_arm_angles}")
-            print(f"Shape of joint angles: {T_arm_angles.shape}")
-            self.robot.write_joint_state_to_sim(T_arm_angles, default_velocities[:, :6], self._arm_dof_idx, None)  # type: ignore
-            return True
-        except Exception as e:
-            print(f"Error setting joint angles: {e}")
-            return False
-
     def get_sim_joint_positions(self) -> torch.Tensor | None:
         """_summary_
         Get the joint positions from the simulation.
@@ -458,17 +444,33 @@ class HawUr5Env(DirectRLEnv):
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
-        joint_pos += torch.rand_like(joint_pos) * 0.1
+        joint_pos += torch.rand_like(joint_pos) * 0.05
 
-        joint_vel = self.robot.data.default_joint_vel[env_ids]
-
-        default_root_state = self.robot.data.default_root_state[env_ids]
+        joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
         self.live_joint_pos[env_ids] = joint_pos
         self.live_joint_vel[env_ids] = joint_vel
-        # self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
-        self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+    def set_joint_angles_absolute(self, joint_angles: list[float64]) -> bool:
+        try:
+            # Set arm joint angles from list
+            T_arm_angles = torch.tensor(joint_angles[:6], device=self.device)
+            T_arm_angles = T_arm_angles.unsqueeze(1)
+            # Set gripper joint angles from list
+            T_arm_angles = torch.transpose(T_arm_angles, 0, 1)
+
+            default_velocities = self.robot.data.default_joint_vel
+
+            # self.joint_pos = T_angles
+            # self.joint_vel = default_velocities
+            print(f"Setting joint angles to: {T_arm_angles}")
+            print(f"Shape of joint angles: {T_arm_angles.shape}")
+            self.robot.write_joint_state_to_sim(T_arm_angles, default_velocities[:, :6], self._arm_dof_idx, None)  # type: ignore
+            return True
+        except Exception as e:
+            print(f"Error setting joint angles: {e}")
+            return False
 
     def _get_rewards(self) -> torch.Tensor:
         total_reward = compute_rewards(
@@ -529,5 +531,4 @@ def compute_rewards(
         + goal_reached_reward
         + torque_penalty
     )
-    print(f"Reward: {reward}")
     return reward
