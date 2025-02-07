@@ -23,6 +23,8 @@ class CubeDetector:
         self.last_pos = np.full((num_envs, 3), np.nan)
         self.last_pos_w = np.full((num_envs, 3), np.nan)
 
+        self.distance_cam_cube = 2.0
+
     def return_last_pos(self, idx: int):
         # increase the age of the data by 1 if no cube detected
         self.data_age[idx] += 1
@@ -120,6 +122,8 @@ class CubeDetector:
         cube_positions = []
         cube_positions_w = []
 
+        distance_cam_cube = []
+
         # Make the camera pose relative to the robot base link
         rel_rgb_poses = rgb_poses - robo_rootpose
 
@@ -158,6 +162,7 @@ class CubeDetector:
                 pos, pos_w = self.return_last_pos(env_idx)
                 cube_positions.append(pos)
                 cube_positions_w.append(pos_w)
+                distance_cam_cube.append(2.0)
             else:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
@@ -174,6 +179,7 @@ class CubeDetector:
                     pos, pos_w = self.return_last_pos(env_idx)
                     cube_positions.append(pos)
                     cube_positions_w.append(pos_w)
+                    distance_cam_cube.append(2.0)
                     continue
 
                 # Get the pixel centroid of the largest contour
@@ -208,6 +214,7 @@ class CubeDetector:
                     point_cam_rf=cube_pos_camera_rf,
                 )
                 cube_positions_w.append(cube_pos_w)
+                distance_cam_cube.append(z)
 
                 # Normalize thee centroid
                 cx = cx_px / rgb_image_np.shape[1]
@@ -221,14 +228,14 @@ class CubeDetector:
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
-                depth_vis = (depth_image_np / self.clipping_range * 255).astype(
-                    np.uint8
-                )
+                # depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                #     np.uint8
+                # )
                 # Convert single channel depth to 3-channel BGR (for contour drawing)
-                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
                 # Draw the contour of the rgb to the depth image to viz the offset
-                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
                 # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
                 # cv2.imwrite(
@@ -244,8 +251,11 @@ class CubeDetector:
                 # --------------------------------------------------------------------
         self.last_pos = cube_positions
         self.last_pos_w = cube_positions_w
+
+        self.distance_cam_cube = distance_cam_cube
         return (
             np.array(cube_positions),
             np.array(cube_positions_w),
             np.array(self.data_age),
+            np.array(self.distance_cam_cube),
         )

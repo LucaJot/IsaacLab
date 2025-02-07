@@ -162,6 +162,7 @@ class CubeDetector:
                 pos, pos_w = self.return_last_pos(env_idx)
                 cube_positions.append(pos)
                 cube_positions_w.append(pos_w)
+                distance_cam_cube.append(2.0)
             else:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
@@ -178,6 +179,7 @@ class CubeDetector:
                     pos, pos_w = self.return_last_pos(env_idx)
                     cube_positions.append(pos)
                     cube_positions_w.append(pos_w)
+                    distance_cam_cube.append(2.0)
                     continue
 
                 # Get the pixel centroid of the largest contour
@@ -212,6 +214,7 @@ class CubeDetector:
                     point_cam_rf=cube_pos_camera_rf,
                 )
                 cube_positions_w.append(cube_pos_w)
+                distance_cam_cube.append(z)
 
                 # Normalize thee centroid
                 cx = cx_px / rgb_image_np.shape[1]
@@ -249,13 +252,6 @@ class CubeDetector:
         self.last_pos = cube_positions
         self.last_pos_w = cube_positions_w
 
-        # Calculate the euclidean distance between the camera and the cube
-        for idx in range(len(rgb_poses)):
-            distance_cam_cube.append(
-                np.linalg.norm(
-                    np.array(cube_positions_w[idx]) - np.array(rgb_poses[idx])
-                )
-            )
         self.distance_cam_cube = distance_cam_cube
         return (
             np.array(cube_positions),
