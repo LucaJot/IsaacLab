@@ -66,7 +66,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
-from ur5_rl_env import HawUr5EnvCfg, HawUr5Env
+from ur5_rl_env_standalone import HawUr5EnvCfg, HawUr5Env
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
@@ -164,10 +164,6 @@ args_cli.log_data = False
 args_cli.num_envs = 5
 args_cli.pp_setup = True
 # ---------------------------
-
-
-# import isaaclab_tasks  # noqa: F401
-# from isaaclab_tasks.utils import parse_env_cfg
 
 
 def main():

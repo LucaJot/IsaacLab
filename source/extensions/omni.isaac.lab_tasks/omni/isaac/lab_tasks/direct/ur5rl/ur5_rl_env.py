@@ -25,10 +25,11 @@ from omni.isaac.lab.assets import (
 )
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sensors import CameraCfg, Camera
-from omni.isaac.dynamic_control import _dynamic_control
+
+# from omni.isaac.dynamic_control import _dynamic_control
 from pxr import Usd, Gf
 
-dc = _dynamic_control.acquire_dynamic_control_interface()
+# dc = _dynamic_control.acquire_dynamic_control_interface()
 
 import numpy as np
 from numpy import float64
@@ -42,26 +43,24 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     # env
     action_space = 7
     f_update = 120
-    observation_space = 35
+    observation_space = 36
     state_space = 0
+    episode_length_s = 1
 
-    alive_reward_scaling = -0.1
+    alive_reward_scaling = -0.01
     terminated_penalty_scaling = -1.0
     vel_penalty_scaling = -0.01
     torque_penalty_scaling = -0.01
     cube_out_of_sight_penalty_scaling = -0.1
     distance_cube_to_goal_penalty_scaling = -0.1
-    goal_reached_scaling = 2.0
+    goal_reached_scaling = 3.0
+    dist_cube_cam_penalty_scaling = -0.1
 
     decimation = 2
     action_scale = 1.0
     v_cm = 35  # cm/s
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
-
-    episode_length_s = 1
-    observation_space = 7
-    action_space = 3
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
@@ -235,6 +234,7 @@ class HawUr5Env(DirectRLEnv):
 
         self.data_age = torch.zeros(self.scene.num_envs, device=self.device)
         self.cube_distance_to_goal = torch.ones(self.scene.num_envs, device=self.device)
+        self.dist_cube_cam = torch.zeros(self.scene.num_envs, device=self.device)
         self.goal_reached = torch.zeros(self.scene.num_envs, device=self.device)
 
         # Yolo model for cube detection
@@ -382,24 +382,27 @@ class HawUr5Env(DirectRLEnv):
 
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
 
-        cube_pos, cube_pos_w, data_age = self.cubedetector.get_cube_positions(
-            rgb_images=rgb.cpu().numpy(),
-            depth_images=depth.squeeze(-1).cpu().numpy(),
-            rgb_camera_poses=self.camera_rgb.data.pos_w.cpu().numpy(),
-            rgb_camera_quats=self.camera_rgb.data.quat_w_world.cpu().numpy(),
-            camera_intrinsics_matrices_k=self.camera_rgb.data.intrinsic_matrices.cpu().numpy(),
-            base_link_poses=self.scene.articulations["ur5"]
-            .data.root_pos_w.cpu()
-            .numpy(),
-            CAMERA_RGB_2_D_OFFSET=-25,
+        cube_pos, cube_pos_w, data_age, dist_cube_cam = (
+            self.cubedetector.get_cube_positions(
+                rgb_images=rgb.cpu().numpy(),
+                depth_images=depth.squeeze(-1).cpu().numpy(),
+                rgb_camera_poses=self.camera_rgb.data.pos_w.cpu().numpy(),
+                rgb_camera_quats=self.camera_rgb.data.quat_w_world.cpu().numpy(),
+                camera_intrinsics_matrices_k=self.camera_rgb.data.intrinsic_matrices.cpu().numpy(),
+                base_link_poses=self.scene.articulations["ur5"]
+                .data.root_pos_w.cpu()
+                .numpy(),
+                CAMERA_RGB_2_D_OFFSET=-25,
+            )
         )
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
+        self.data_age = torch.tensor(data_age, device=self.device)
+        self.dist_cube_cam = torch.tensor(dist_cube_cam, device=self.device)
 
         # Compute distance cube position to goal position
-        self.data_age = torch.tensor(data_age, device=self.device)
         self.cube_distance_to_goal = torch.norm(
-            cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=True
+            cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=False
         )
 
         # Obs of shape [n_envs, 1, 27])
@@ -411,14 +414,15 @@ class HawUr5Env(DirectRLEnv):
                 self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
                 cube_pos.unsqueeze(dim=1),
-                self.cube_distance_to_goal.unsqueeze(dim=1),
+                self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
+                self.dist_cube_cam.unsqueeze(dim=1).unsqueeze(dim=1),
             ),
             dim=-1,
         )
-        print(obs.shape)
 
         obs = obs.float()
+        obs = obs.squeeze(dim=1)
 
         observations = {"policy": obs}
         return observations
@@ -501,20 +505,41 @@ class HawUr5Env(DirectRLEnv):
         total_reward = compute_rewards(
             self.cfg.alive_reward_scaling,
             self.reset_terminated,
-            self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-            self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-            self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-            self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
-            self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
+            self.live_joint_pos[:, : len(self._arm_dof_idx)],
+            self.live_joint_vel[:, : len(self._arm_dof_idx)],
+            self.live_joint_torque[:, : len(self._arm_dof_idx)],
+            self.live_joint_pos[:, : len(self._gripper_dof_idx)],
+            self.live_joint_vel[:, : len(self._gripper_dof_idx)],
             self.cfg.vel_penalty_scaling,
             self.cfg.torque_penalty_scaling,
-            self.data_age.unsqueeze(dim=1),
+            self.data_age,
             self.cfg.cube_out_of_sight_penalty_scaling,
-            self.cube_distance_to_goal.unsqueeze(dim=1),
+            self.cube_distance_to_goal,
             self.cfg.distance_cube_to_goal_penalty_scaling,
-            self.goal_reached.unsqueeze(dim=1),
+            self.goal_reached,
             self.cfg.goal_reached_scaling,
+            self.dist_cube_cam,
+            self.cfg.dist_cube_cam_penalty_scaling,
         )
+        # print all shapes of the inputs with their names
+        # print(
+        #     f"Shapes: \n"
+        #     f"reset_terminated: {self.reset_terminated.shape}\n"
+        #     f"arm_joint_pos: {self.live_joint_pos[:, : len(self._arm_dof_idx)].shape}\n"
+        #     f"arm_joint_vel: {self.live_joint_vel[:, : len(self._arm_dof_idx)].shape}\n"
+        #     f"arm_joint_torque: {self.live_joint_torque[:, : len(self._arm_dof_idx)].shape}\n"
+        #     f"gripper_joint_pos: {self.live_joint_pos[:, : len(self._gripper_dof_idx)].shape}\n"
+        #     f"gripper_joint_vel: {self.live_joint_vel[:, : len(self._gripper_dof_idx)].shape}\n"
+        #     f"vel_penalty_scaling: {self.cfg.vel_penalty_scaling}\n"
+        #     f"torque_penalty_scaling: {self.cfg.torque_penalty_scaling}\n"
+        #     f"data_age: {self.data_age.shape}\n"
+        #     f"cube_out_of_sight_penalty_scaling: {self.cfg.cube_out_of_sight_penalty_scaling}\n"
+        #     f"distance_cube_to_goal_pos: {self.cube_distance_to_goal.shape}\n"
+        #     f"distance_cube_to_goal_penalty_scaling: {self.cfg.distance_cube_to_goal_penalty_scaling}\n"
+        #     f"goal_reached: {self.goal_reached.shape}\n"
+        #     f"goal_reached_scaling: {self.cfg.goal_reached_scaling}\n"
+        # )
+        # print(f"Total Reward shape in function: {total_reward.shape}")
         return total_reward
 
 
@@ -535,6 +560,8 @@ def compute_rewards(
     distance_cube_to_goal_penalty_scaling: float,
     goal_reached: torch.Tensor,
     goal_reached_scaling: float,
+    dist_cube_cam: torch.Tensor,
+    dist_cube_cam_penalty_scaling: float,
 ) -> torch.Tensor:
 
     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
@@ -547,6 +574,11 @@ def compute_rewards(
         torch.abs(arm_joint_torque), dim=-1
     )
     goal_reached_reward = goal_reached_scaling * goal_reached
+    dist_cube_cam_penalty = torch.where(
+        dist_cube_cam > 0.3,
+        dist_cube_cam_penalty_scaling * dist_cube_cam,
+        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    )
 
     reward = (
         penalty_alive
@@ -555,5 +587,6 @@ def compute_rewards(
         + penalty_distance_cube_to_goal
         + goal_reached_reward
         + torque_penalty
+        + dist_cube_cam_penalty
     )
     return reward
