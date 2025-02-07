@@ -15,19 +15,25 @@ class CubeDetector:
         send_joint_command
         """
         self.real = real
-        self.area_thresh = 2 if real else 1000
+        #! TODO CHECK THRESH REAL!!
+        self.area_thresh = 100 if real else 1000
         self.clipping_range = 2000.0 if real else 2.0
         self.data_age = np.zeros(num_envs)
-        self.last_pos = np.ndarray((num_envs, 3))
-        self.last_pos_w = np.ndarray((num_envs, 3))
+        # Init with NaN to indicate that no cube has been detected yet
+        self.last_pos = np.full((num_envs, 3), np.nan)
+        self.last_pos_w = np.full((num_envs, 3), np.nan)
 
     def return_last_pos(self, idx: int):
         # increase the age of the data by 1 if no cube detected
         self.data_age[idx] += 1
-        if self.last_pos[idx] is not None and self.last_pos_w[idx] is not None:
+        # If the cube has been detected before, return the last known position
+        if not np.all(np.isnan(self.last_pos[idx])) and not np.all(
+            np.isnan(self.last_pos_w[idx])
+        ):
             return self.last_pos[idx], self.last_pos_w[idx]
         else:
-            return [-1.0, -1.0, -1.0], [-1.0, -1.0, -1.0]
+            # Cube not seen yet -> set it to be far away
+            return [2.0, 2.0, 2.0], [2.0, 2.0, 2.0]
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
         """
