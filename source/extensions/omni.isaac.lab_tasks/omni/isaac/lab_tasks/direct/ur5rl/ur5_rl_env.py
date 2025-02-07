@@ -47,14 +47,14 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     state_space = 0
     episode_length_s = 1
 
-    alive_reward_scaling = -0.01
+    alive_reward_scaling = -0.001
     terminated_penalty_scaling = -1.0
-    vel_penalty_scaling = -0.01
-    torque_penalty_scaling = -0.01
-    cube_out_of_sight_penalty_scaling = -0.1
-    distance_cube_to_goal_penalty_scaling = -0.1
+    vel_penalty_scaling = -0.001
+    torque_penalty_scaling = -0.001
+    cube_out_of_sight_penalty_scaling = -0.01
+    distance_cube_to_goal_penalty_scaling = -0.001
     goal_reached_scaling = 3.0
-    dist_cube_cam_penalty_scaling = -0.1
+    dist_cube_cam_penalty_scaling = -1.0
 
     decimation = 2
     action_scale = 1.0
@@ -191,6 +191,12 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     # ...
 
 
+# init pos close to the cube
+# [-0.1, -1.00, 1.5, -3.30, -1.57, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+# init pos distant from the cube
+# [0.0, -1.92, 1.92, -3.14, -1.57, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+
 class HawUr5Env(DirectRLEnv):
     cfg: HawUr5EnvCfg
 
@@ -235,6 +241,7 @@ class HawUr5Env(DirectRLEnv):
         self.data_age = torch.zeros(self.scene.num_envs, device=self.device)
         self.cube_distance_to_goal = torch.ones(self.scene.num_envs, device=self.device)
         self.dist_cube_cam = torch.zeros(self.scene.num_envs, device=self.device)
+        self.mean_dist_cam_cube = 0
         self.goal_reached = torch.zeros(self.scene.num_envs, device=self.device)
 
         # Yolo model for cube detection
@@ -331,7 +338,7 @@ class HawUr5Env(DirectRLEnv):
         ]
         # Check if the sim joints deviate too much from the script ground truth joints
         if not torch.allclose(
-            current_main_joint_positions, current_main_joint_positions_sim, atol=1e-3
+            current_main_joint_positions, current_main_joint_positions_sim, atol=1e-2
         ):
             print(
                 f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
@@ -405,6 +412,8 @@ class HawUr5Env(DirectRLEnv):
             cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=False
         )
 
+        print(f"Mean distance camera to cube: {self.dist_cube_cam}")
+
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
             (
@@ -470,6 +479,7 @@ class HawUr5Env(DirectRLEnv):
         self.live_joint_pos[env_ids] = joint_pos
         self.live_joint_vel[env_ids] = joint_vel
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self.data_age = torch.zeros_like(self.data_age)
 
         # # Reset Cube Pos
         # if self.cfg.pp_setup:

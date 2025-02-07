@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # SETUP VARS ----------------
-args_cli.num_envs = 5
+args_cli.num_envs = 1
 # ---------------------------
 
 
@@ -61,13 +61,9 @@ def main():
             # take random actions
             actions = torch.rand(args_cli.num_envs, 7) * 2 - 1
             obs, rew, terminated, truncated, info = env.step(actions)
-            print("-" * 10 + f" Step {count} " + "-" * 10)
-            print(f"Observation: {obs}")
+            # print("-" * 10 + f" Step {count} " + "-" * 10)
 
-            obs_policy = obs["policy"]
-            print(f"Shape of observation: {obs_policy.shape}")
-
-            print("-" * 30)
+            # print("-" * 30)
 
             # update counter
             count += 1
