@@ -23,6 +23,8 @@ class CubeDetector:
         self.last_pos = np.full((num_envs, 3), np.nan)
         self.last_pos_w = np.full((num_envs, 3), np.nan)
 
+        self.distance_cam_cube = 2.0
+
     def return_last_pos(self, idx: int):
         # increase the age of the data by 1 if no cube detected
         self.data_age[idx] += 1
@@ -119,6 +121,8 @@ class CubeDetector:
         robo_rootpose = base_link_poses
         cube_positions = []
         cube_positions_w = []
+
+        distance_cam_cube = []
 
         # Make the camera pose relative to the robot base link
         rel_rgb_poses = rgb_poses - robo_rootpose
@@ -221,14 +225,14 @@ class CubeDetector:
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
-                depth_vis = (depth_image_np / self.clipping_range * 255).astype(
-                    np.uint8
-                )
+                # depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                #     np.uint8
+                # )
                 # Convert single channel depth to 3-channel BGR (for contour drawing)
-                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
                 # Draw the contour of the rgb to the depth image to viz the offset
-                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
                 # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
                 # cv2.imwrite(
@@ -244,8 +248,18 @@ class CubeDetector:
                 # --------------------------------------------------------------------
         self.last_pos = cube_positions
         self.last_pos_w = cube_positions_w
+
+        # Calculate the euclidean distance between the camera and the cube
+        for idx in range(len(rgb_poses)):
+            distance_cam_cube.append(
+                np.linalg.norm(
+                    np.array(cube_positions_w[idx]) - np.array(rgb_poses[idx])
+                )
+            )
+        self.distance_cam_cube = distance_cam_cube
         return (
             np.array(cube_positions),
             np.array(cube_positions_w),
             np.array(self.data_age),
+            np.array(self.distance_cam_cube),
         )
