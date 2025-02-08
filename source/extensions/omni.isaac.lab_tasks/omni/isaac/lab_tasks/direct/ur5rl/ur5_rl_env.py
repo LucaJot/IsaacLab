@@ -34,7 +34,7 @@ import numpy as np
 from numpy import float64
 from scipy.spatial.transform import Rotation as R
 
-from .cube_detector import CubeDetector
+from cube_detector import CubeDetector
 
 from omni.isaac.lab.managers import EventTermCfg as EventTerm
 import omni.isaac.lab.envs.mdp as mdp
@@ -45,7 +45,7 @@ from omni.isaac.lab.utils.noise.noise_cfg import (
     NoiseModelWithAdditiveBiasCfg,
 )
 
-from .ur5_rl_env_cfg import HawUr5EnvCfg
+from ur5_rl_env_cfg import HawUr5EnvCfg
 
 # init pos close to the cube
 # [-0.1, -1.00, 1.5, -3.30, -1.57, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -61,6 +61,7 @@ class HawUr5Env(DirectRLEnv):
         cfg: HawUr5EnvCfg,
         render_mode: str | None = None,
         cube_goal_pos: list = [1.0, -0.1, 0.8],
+        arm_init_state: list = [],
         **kwargs,
     ):
         super().__init__(cfg, render_mode, **kwargs)
@@ -69,22 +70,19 @@ class HawUr5Env(DirectRLEnv):
         self._gripper_dof_idx, _ = self.robot.find_joints(self.cfg.gripper_dof_name)
         self.haw_ur5_dof_idx, _ = self.robot.find_joints(self.cfg.haw_ur5_dof_name)
         self.action_scale = self.cfg.action_scale
-        # Add zero gripper joint states to the arm joint states for full joint states
-        full_joint_init = torch.cat(
-            (
-                torch.tensor(self.cfg.arm_joints_init_state, device=self.device),
-                torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device=self.device),
-            ),
-            dim=0,
+
+        self.robot.data.default_joint_pos = self.cfg.joint_init_state.repeat(
+            self.scene.num_envs, 1
         )
-        # Repeat the full joint states for all environments
-        self.joint_init_state = full_joint_init.repeat(self.scene.num_envs, 1)
-        self.robot.data.default_joint_pos = self.joint_init_state
 
         # Holds the current joint positions and velocities
         self.live_joint_pos: torch.Tensor = self.robot.data.joint_pos
         self.live_joint_vel: torch.Tensor = self.robot.data.joint_vel
         self.live_joint_torque: torch.Tensor = self.robot.data.applied_torque
+        self.torque_limit = self.cfg.torque_limit
+        self.torque_limit_exeeded: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device, dtype=torch.bool
+        )
 
         self.jointpos_script_GT: torch.Tensor = self.live_joint_pos[:, :].clone()
 
@@ -99,11 +97,11 @@ class HawUr5Env(DirectRLEnv):
         # Expand the cube goal position to match the number of environments
         self.cube_goal_pos = self.cube_goal_pos.expand(cfg.scene.num_envs, -1)
 
+        self.goal_reached = torch.zeros(self.scene.num_envs, device=self.device)
         self.data_age = torch.zeros(self.scene.num_envs, device=self.device)
         self.cube_distance_to_goal = torch.ones(self.scene.num_envs, device=self.device)
         self.dist_cube_cam = torch.zeros(self.scene.num_envs, device=self.device)
         self.mean_dist_cam_cube = 0
-        self.goal_reached = torch.zeros(self.scene.num_envs, device=self.device)
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -131,7 +129,7 @@ class HawUr5Env(DirectRLEnv):
             spawn_cuboid(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cuboid_cfg,
-                translation=(1.0, 0.0, 1.0),
+                translation=self.cfg.cube_init_state,
             )
 
         # clone, filter, and replicate
@@ -140,6 +138,7 @@ class HawUr5Env(DirectRLEnv):
 
         # add articultion to scene
         self.scene.articulations["ur5"] = self.robot
+
         # self.scene.rigid_objects["cube"] = self.cubes
         # return the scene information
         self.camera_rgb = Camera(cfg=self.cfg.camera_rgb_cfg)
@@ -295,7 +294,7 @@ class HawUr5Env(DirectRLEnv):
         obs = obs.float()
         obs = obs.squeeze(dim=1)
 
-        observations = {"policy": obs}
+        observations = {"policy": obs, "goal_reached": self.goal_reached}
         return observations
 
     def get_sim_joint_positions(self) -> torch.Tensor | None:
@@ -315,14 +314,36 @@ class HawUr5Env(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        out_of_bounds = torch.zeros_like(time_out, device=self.device)
+
+        # Get torque
+        # print(f"Live Torque: {self.live_joint_torque[:, : len(self._arm_dof_idx)]}")
+        # Check if any torque in each environment exceeds the threshold
+        torque_limit_exceeded = torch.any(
+            torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
+            > self.torque_limit,
+            dim=1,
+        )
+
+        # Provide a grace period for high torques when resetting
+        pardon = torch.where(
+            self.episode_length_buf < 5, torch.tensor(1), torch.tensor(0)
+        )
+
+        self.torque_limit_exeeded = torch.logical_and(
+            torque_limit_exceeded == 1, pardon == 0
+        )
+
         # position reached
-        goal_reached = torch.where(
+        self.goal_reached = torch.where(
             self.cube_distance_to_goal.squeeze() < 0.05,
             torch.tensor(1, device=self.device),
             torch.tensor(0, device=self.device),
         )
-        reset_terminated = out_of_bounds | goal_reached
+
+        # Resolves the issue of the goal_reached tensor becoming a scalar when the number of environments is 1
+        if self.cfg.scene.num_envs == 1:
+            self.goal_reached = self.goal_reached.unsqueeze(0)
+        reset_terminated = self.goal_reached | self.torque_limit_exeeded
         return reset_terminated, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
@@ -334,14 +355,15 @@ class HawUr5Env(DirectRLEnv):
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
-        joint_pos += torch.rand_like(joint_pos) * 0.05
+        joint_pos += torch.rand_like(joint_pos) * 0.1
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
         self.live_joint_pos[env_ids] = joint_pos
         self.live_joint_vel[env_ids] = joint_vel
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-        self.data_age = torch.zeros_like(self.data_age)
+        self.data_age[env_ids] = 0
+        self.goal_reached[env_ids] = 0
 
         # # Reset Cube Pos
         # if self.cfg.pp_setup:
@@ -384,6 +406,8 @@ class HawUr5Env(DirectRLEnv):
             self.live_joint_vel[:, : len(self._gripper_dof_idx)],
             self.cfg.vel_penalty_scaling,
             self.cfg.torque_penalty_scaling,
+            self.torque_limit_exeeded,
+            self.cfg.torque_limit_exeeded_penalty_scaling,
             self.data_age,
             self.cfg.cube_out_of_sight_penalty_scaling,
             self.cube_distance_to_goal,
@@ -393,6 +417,8 @@ class HawUr5Env(DirectRLEnv):
             self.dist_cube_cam,
             self.cfg.dist_cube_cam_penalty_scaling,
         )
+        if self.torque_limit_exeeded.any():
+            print(f"Torque limit exeeded: {self.torque_limit_exeeded}")
         # print all shapes of the inputs with their names
         # print(
         #     f"Shapes: \n"
@@ -426,6 +452,8 @@ def compute_rewards(
     gripper_joint_vel: torch.Tensor,
     vel_penalty_scaling: float,
     torque_penalty_scaling: float,
+    torque_limit_exeeded: torch.Tensor,
+    torque_limit_exeeded_penalty_scaling: float,
     data_age: torch.Tensor,
     cube_out_of_sight_penalty_scaling: float,
     distance_cube_to_goal_pos: torch.Tensor,
@@ -445,6 +473,11 @@ def compute_rewards(
     torque_penalty = torque_penalty_scaling * torch.sum(
         torch.abs(arm_joint_torque), dim=-1
     )
+
+    torque_limit_exeeded_penalty = (
+        torque_limit_exeeded_penalty_scaling * torque_limit_exeeded
+    )
+
     goal_reached_reward = goal_reached_scaling * goal_reached
     dist_cube_cam_penalty = torch.where(
         dist_cube_cam > 0.3,
@@ -457,6 +490,7 @@ def compute_rewards(
         + penalty_vel
         + penalty_cube_out_of_sight
         + penalty_distance_cube_to_goal
+        + torque_limit_exeeded_penalty
         + goal_reached_reward
         + torque_penalty
         + dist_cube_cam_penalty
