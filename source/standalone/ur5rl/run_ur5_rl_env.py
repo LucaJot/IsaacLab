@@ -306,7 +306,9 @@ def main():
             # Log the cube positions
             if LOG_DATA:
                 if count > 500 and count < 1100:
-                    cube_position_tracked = obs["cube_pos"][0].cpu().numpy().tolist()
+                    cube_position_tracked = (
+                        obs["info"]["cube_pos"][0].cpu().numpy().tolist()  # type: ignore
+                    )
                     store_cube_positions(
                         logger=logger,
                         cube_position_tracked=cube_position_tracked,
