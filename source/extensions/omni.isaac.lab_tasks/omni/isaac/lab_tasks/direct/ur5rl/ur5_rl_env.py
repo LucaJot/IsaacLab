@@ -417,8 +417,8 @@ class HawUr5Env(DirectRLEnv):
             self.dist_cube_cam,
             self.cfg.dist_cube_cam_penalty_scaling,
         )
-        if self.torque_limit_exeeded.any():
-            print(f"Torque limit exeeded: {self.torque_limit_exeeded}")
+        # if self.torque_limit_exeeded.any():
+        #     print(f"Torque limit exeeded: {self.torque_limit_exeeded}")
         # print all shapes of the inputs with their names
         # print(
         #     f"Shapes: \n"

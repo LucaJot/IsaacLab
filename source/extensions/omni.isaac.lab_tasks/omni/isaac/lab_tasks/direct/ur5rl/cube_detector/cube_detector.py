@@ -15,8 +15,7 @@ class CubeDetector:
         send_joint_command
         """
         self.real = real
-        #! TODO CHECK THRESH REAL!!
-        self.area_thresh = 100 if real else 1000
+        self.area_thresh = 100 if real else 1000  # ! TEST  70 Reasonable value for real
         self.clipping_range = 2000.0 if real else 2.0
         self.data_age = np.zeros(num_envs)
         # Init with NaN to indicate that no cube has been detected yet
@@ -125,7 +124,7 @@ class CubeDetector:
         distance_cam_cube = []
 
         # Make the camera pose relative to the robot base link
-        rel_rgb_poses = rgb_poses - robo_rootpose
+        rel_rgb_poses = rgb_poses - robo_rootpose  #! was -
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_images.shape[0]):
@@ -189,7 +188,22 @@ class CubeDetector:
                 # print(f"Centroid [px]: {cx_px}/1200, {cy_px}/720")
 
                 # Get depth value at the centroid
-                z = depth_image_np[cy_px, cx_px]
+                # z = depth_image_np[cy_px, cx_px]
+
+                mask = np.zeros_like(depth_image_np, dtype=np.uint8)
+                cv2.drawContours(
+                    image=mask,
+                    contours=[largest_contour],
+                    contourIdx=-1,
+                    color=255,
+                    thickness=cv2.FILLED,
+                )
+
+                # Extract all depth values inside the contour
+                contour_depths = depth_image_np[mask == 255]
+
+                # Compute the mean depth value
+                z = np.median(contour_depths[contour_depths > 0])  # Ignore zero values
 
                 if self.real:
                     # Convert the depth value to meters
@@ -228,25 +242,25 @@ class CubeDetector:
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
-                # depth_vis = (depth_image_np / self.clipping_range * 255).astype(
-                #     np.uint8
-                # )
+                depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                    np.uint8
+                )
                 # Convert single channel depth to 3-channel BGR (for contour drawing)
-                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
                 # Draw the contour of the rgb to the depth image to viz the offset
-                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
-                # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
+                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
-                #     depth_vis_bgr,
-                # )
+                cv2.imwrite(
+                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
+                    depth_vis_bgr,
+                )
 
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb.png",
-                #     rgb_image_np,
-                # )
+                cv2.imwrite(
+                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb{area}.png",
+                    rgb_image_np,
+                )
 
                 # --------------------------------------------------------------------
         self.last_pos = cube_positions

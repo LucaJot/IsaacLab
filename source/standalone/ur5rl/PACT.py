@@ -52,7 +52,7 @@ from agents.rsl_rl_ppo_cfg import (
     Ur5RLPPORunnerCfg,
 )
 
-from ur5_rl_env_cfg import HawUr5EnvCfg, HawUr5Env
+from ur5_rl_env_cfg import HawUr5EnvCfg
 
 from ros2_humble_ws.src.ur5_parallel_control.ur5_parallel_control.ur5_basic_control_fpc import (
     Ur5JointController,
@@ -107,8 +107,10 @@ def get_current_cube_pos_from_real_robot(realsense_node: realsense_obs_reciever)
     """Sync the simulated cube position with the real cube position."""
     # Sync sim cube with real cube
     print("[INFO]: Waiting for cube positions from the real robot...")
-    real_cube_positions, data_age = realsense_node.get_cube_position()
-    return real_cube_positions, data_age
+    while realsense_node.get_cube_position() == None:
+        pass
+    real_cube_positions, data_age, z = realsense_node.get_cube_position()
+    return real_cube_positions, data_age, z
 
 
 def run_task_in_sim(
@@ -190,7 +192,7 @@ def run_task_in_sim(
             # env stepping
             obs, reward, dones, info = env.step(actions)
             # print_dict(info)
-            if dones[0]:
+            if False:  # dones[0]:
                 if info["time_outs"][0]:
                     print("Time Out!")
                     return False, False, obs
@@ -208,11 +210,44 @@ def run_task_in_sim(
     env.close()
 
 
+def start_ros_nodes(
+    ur5_controller: Ur5JointController, realsense_node: realsense_obs_reciever
+):
+    """Start both ROS 2 nodes using a MultiThreadedExecutor."""
+    executor = rclpy.executors.MultiThreadedExecutor()
+
+    executor.add_node(ur5_controller)
+    executor.add_node(realsense_node)
+
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+
+    return executor, thread
+
+
 def main():
     """Main function."""
-    # TODO Get Real State from file or robot
+    rclpy.init()
+    ur5_control = Ur5JointController()
+    realsense = realsense_obs_reciever()
+    start_ros_nodes(ur5_control, realsense)
 
-    success, interrupt, obs = run_task_in_sim()
+    # Get the current joint positions from the real robot
+    real_joint_positions = get_current_joint_pos_from_real_robot(ur5_control)
+    cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense)
+    # Unpack (real has no parallel envs)
+    cube_pos = cube_pos[0]
+    cube_pos[2] += 0.2
+    data_age = data_age[0]
+
+    print(f"Recieved Real Joint Positions: {real_joint_positions}")
+    print(f"Recieved Real Cube Positions: {cube_pos}")
+    print(f"Z: {z}")
+
+    success, interrupt, obs = run_task_in_sim(
+        arm_state=real_joint_positions[:-1], cube_state=tuple(cube_pos)
+    )
+
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
 
