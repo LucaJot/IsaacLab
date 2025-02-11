@@ -48,6 +48,8 @@ class Ur5JointController(Node):
         self.current_angle_delta: list[float64] = [np.float64(0.0)] * 6
         # Current joint positions as received from the joint state topic
         self.live_joint_positions: list[float64] | None = None
+        self.live_joint_velocities: list[float64] | None = None
+        self.live_joint_torques: list[float64] | None = None
         # Set a ground truth of the robot state to avoid drift
         self.joint_positions_GT: list[float64] | None = None
 
@@ -92,6 +94,21 @@ class Ur5JointController(Node):
             name_val_mapping[joint]
             for joint in self.joint_names  # use dict to get the values in the order of joint_names
         ]
+
+        vel_name_val_mapping: dict[str, float64] = dict(zip(msg.name, msg.velocity))  # type: ignore
+
+        self.live_joint_velocities = [
+            vel_name_val_mapping[joint]
+            for joint in self.joint_names  # use dict to get the values in the order of joint_names
+        ]
+
+        torque_name_val_mapping: dict[str, float64] = dict(zip(msg.name, msg.effort))  # type: ignore
+
+        self.live_joint_torques = [
+            torque_name_val_mapping[joint]
+            for joint in self.joint_names  # use dict to get the values in the order of joint_names
+        ]
+
         # Set the ground truth joint positions if not set yet
         if self.joint_positions_GT is None and self.live_joint_positions is not None:
             self.joint_positions_GT = self.live_joint_positions.copy()
@@ -107,6 +124,19 @@ class Ur5JointController(Node):
         gripper_state = np.float64(-1.0 if self.current_gripper_state == 0.0 else 1.0)
         all_joint_positions = self.live_joint_positions + [(gripper_state)]
         return all_joint_positions
+
+    def get_joint_observation(self) -> dict | None:
+        obs = {
+            "joint_positions": [self.live_joint_positions],
+            "joint_velocities": [self.live_joint_velocities],
+            "joint_torques": [self.live_joint_torques],
+            "gripper_state": [self.current_gripper_state],
+        }
+
+        # Check if any of the values are None
+        if not all(obs.values()):
+            return None
+        return obs
 
     def receive_joint_delta(self, msg: Float64MultiArray):
         """_summary_

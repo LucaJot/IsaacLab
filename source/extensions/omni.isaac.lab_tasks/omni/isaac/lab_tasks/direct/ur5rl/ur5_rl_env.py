@@ -61,7 +61,6 @@ class HawUr5Env(DirectRLEnv):
         cfg: HawUr5EnvCfg,
         render_mode: str | None = None,
         cube_goal_pos: list = [1.0, -0.1, 0.8],
-        arm_init_state: list = [],
         **kwargs,
     ):
         super().__init__(cfg, render_mode, **kwargs)
@@ -88,7 +87,9 @@ class HawUr5Env(DirectRLEnv):
 
         self.action_dim = len(self._arm_dof_idx) + len(self._gripper_dof_idx)
 
-        self.gripper_action_bin: torch.Tensor | None = None
+        self.gripper_action_bin: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device, dtype=torch.bool
+        )
 
         # Cube detection
         self.cubedetector = CubeDetector(num_envs=self.scene.num_envs)
@@ -281,8 +282,7 @@ class HawUr5Env(DirectRLEnv):
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-                self.live_joint_pos[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
-                self.live_joint_vel[:, : len(self._gripper_dof_idx)].unsqueeze(dim=1),
+                self.gripper_action_bin.unsqueeze(dim=1).unsqueeze(dim=1),
                 cube_pos.unsqueeze(dim=1),
                 self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
@@ -402,8 +402,7 @@ class HawUr5Env(DirectRLEnv):
             self.live_joint_pos[:, : len(self._arm_dof_idx)],
             self.live_joint_vel[:, : len(self._arm_dof_idx)],
             self.live_joint_torque[:, : len(self._arm_dof_idx)],
-            self.live_joint_pos[:, : len(self._gripper_dof_idx)],
-            self.live_joint_vel[:, : len(self._gripper_dof_idx)],
+            self.gripper_action_bin,
             self.cfg.vel_penalty_scaling,
             self.cfg.torque_penalty_scaling,
             self.torque_limit_exeeded,
@@ -448,8 +447,7 @@ def compute_rewards(
     arm_joint_pos: torch.Tensor,
     arm_joint_vel: torch.Tensor,
     arm_joint_torque: torch.Tensor,
-    gripper_joint_pos: torch.Tensor,
-    gripper_joint_vel: torch.Tensor,
+    gripper_action_bin: torch.Tensor,
     vel_penalty_scaling: float,
     torque_penalty_scaling: float,
     torque_limit_exeeded: torch.Tensor,

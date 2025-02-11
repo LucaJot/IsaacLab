@@ -9,6 +9,7 @@ Franka-Cabinet environment.
 import gymnasium as gym
 
 from . import agents
+from .agents.rsl_rl_ppo_cfg import *
 
 ##
 # Register Gym environments.
