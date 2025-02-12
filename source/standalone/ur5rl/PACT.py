@@ -7,10 +7,13 @@
 
 """Launch Isaac Sim Simulator first."""
 
+from datetime import datetime
+import subprocess
 import sys
 import os
 
 import argparse
+import time
 
 from omni.isaac.lab.app import AppLauncher
 
@@ -71,6 +74,14 @@ import torch
 import gymnasium as gym
 from omni.isaac.lab.envs import DirectRLEnv
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False
+
+from omni.isaac.lab.utils.dict import print_dict
+from omni.isaac.lab.utils.io import dump_pickle, dump_yaml
+
 import numpy as np
 
 
@@ -112,14 +123,12 @@ def get_current_joint_pos_from_real_robot(ur5_controller: Ur5JointController):
 
 
 def run_task_in_sim(
-    env: gym.Env,
+    env: RslRlVecEnvWrapper,
     log_dir: str,
     resume_path: str,
     agent_cfg: RslRlOnPolicyRunnerCfg,
 ):
     """Play with RSL-RL agent."""
-    # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env)  # type: ignore
 
     policy = load_most_recent_model(
         env=env,
@@ -153,9 +162,6 @@ def run_task_in_sim(
             if info["observations"]["goal_reached"][0]:  # type: ignore
                 print("Goal Reached!")
                 return True, False, obs, policy
-
-    # close the simulator
-    env.close()
 
 
 def start_ros_nodes(
@@ -238,6 +244,7 @@ def step_real(policy, ur5_controller, realsense_node, cube_goal_pos):
     # Get the current joint positions from the real robot
     obs = get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos)
     action = policy(obs)
+    action = torch.tanh(action)
     print(f"Action: {action}")
     print(f"Observations: {obs}")
     # Execute the action on the real robot
@@ -269,6 +276,46 @@ def set_learning_config():
     log_dir = os.path.dirname(resume_path)
     # --------------------------------------------------------------------
     return agent_cfg, log_dir, resume_path
+
+
+def train_rsl_rl_agent(env, env_cfg, agent_cfg):
+    # specify directory for logging experiments
+    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    log_root_path = os.path.abspath(log_root_path)
+    print(f"[INFO] Logging experiment in directory: {log_root_path}")
+    # specify directory for logging runs: {time-stamp}_{run_name}
+    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if agent_cfg.run_name:
+        log_dir += f"_{agent_cfg.run_name}"
+    log_dir = os.path.join(log_root_path, log_dir)
+
+    # save resume path before creating a new log_dir
+    resume_path = get_checkpoint_path(
+        log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+    )
+
+    # create runner from rsl-rl
+    runner = OnPolicyRunner(
+        env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device
+    )
+    # write git state to logs
+    runner.add_git_repo_to_log(__file__)
+    # load the checkpoint
+
+    print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+    # load previously trained model
+    runner.load(resume_path)
+
+    # dump the configuration into log-directory
+    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+
+    # run training
+    runner.learn(
+        num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True
+    )
 
 
 def load_most_recent_model(
@@ -313,6 +360,9 @@ def goal_reached(realsense_node, goal_pos, threshold=0.05):
     return distance < threshold
 
 
+use_real_hw = False
+
+
 def main():
     """Main function."""
     # Set the goal state of the cube
@@ -321,29 +371,41 @@ def main():
     # Set rl learning configuration
     agent_cfg, log_dir, resume_path = set_learning_config()
 
-    # Start the ROS 2 nodes ----------------------------------------------
-    rclpy.init()
-    ur5_control = Ur5JointController()
-    realsense = realsense_obs_reciever()
-    start_ros_nodes(ur5_control, realsense)
-    # --------------------------------------------------------------------
+    if use_real_hw:
+        # Start the ROS 2 nodes ----------------------------------------------
+        rclpy.init()
+        ur5_control = Ur5JointController()
+        realsense = realsense_obs_reciever()
+        start_ros_nodes(ur5_control, realsense)
+        # --------------------------------------------------------------------
 
-    # Get the current joint positions from the real robot ----------------
-    real_joint_positions = get_current_joint_pos_from_real_robot(ur5_control)
-    cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense)
-    # Unpack (real has no parallel envs)
-    cube_pos = cube_pos[0]
-    cube_pos[2] += 0.2
-    data_age = data_age[0]
-    print(f"Recieved Real Joint Positions: {real_joint_positions}")
-    print(f"Recieved Real Cube Positions: {cube_pos}")
-    print(f"Z: {z}")
+        # Get the current joint positions from the real robot ----------------
+        real_joint_positions = get_current_joint_pos_from_real_robot(ur5_control)
+        cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense)
+        # Unpack (real has no parallel envs)
+        cube_pos = cube_pos[0]
+        cube_pos[2] += 0.2
+        data_age = data_age[0]
+        print(f"Recieved Real Joint Positions: {real_joint_positions}")
+        print(f"Recieved Real Cube Positions: {cube_pos}")
+        print(f"Z: {z}")
     # --------------------------------------------------------------------
+    else:
+        real_joint_positions = [
+            -0.15472919145692998,
+            -1.8963201681720179,
+            2.0,
+            -2.160175625477926,
+            -1.5792139212237757,
+            -0.0030048529254358414,
+            -1.0,
+        ]
+        cube_pos = [1.0, 0.0, 1.0]
 
     # Run the task with real state in simulation -------------------------
     env_cfg = parse_env_cfg(
         task_name="Isaac-Ur5-RL-Direct-v0",
-        num_envs=1,
+        num_envs=16,
     )
     env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_init_state = real_joint_positions  # type: ignore
@@ -354,6 +416,8 @@ def main():
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
     )
+    # wrap around environment for rsl-rl
+    env = RslRlVecEnvWrapper(env)  # type: ignore
 
     # Run the task in the simulator
     success, interrupt, obs, policy = run_task_in_sim(
@@ -363,8 +427,9 @@ def main():
 
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
+    interrupt = True  #! Force Retrain for Debug
 
-    if True:
+    if success:
         print("Task solved in Sim!")
         print("Moving network control to real robot...")
         # Create real env wrapper
@@ -373,12 +438,18 @@ def main():
         while not goal_reached(realsense, cube_goal_pos):
             obs = step_real(policy, ur5_control, realsense, cube_goal_pos)
             print(f"Observations: {obs}")
+            # TODO Interrupts catchen
 
-    if interrupt:
-        # Get the interrupt joint positions from the real robot
-        # Get current Cube position from realsense
-        # Start training loop in SIM with this state
-        pass
+    elif interrupt:
+        # get interrupt state
+        # env.close()
+        # env = None
+
+        arm_interrupt_state = obs[0][0:6].cpu().numpy()
+        gripper_interrupt_state = obs[0][18].cpu().numpy()
+        env_cfg.arm_joints_init_state = arm_interrupt_state
+
+        train_rsl_rl_agent(env, env_cfg, agent_cfg)
 
     return
 

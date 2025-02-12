@@ -69,10 +69,54 @@ class HawUr5Env(DirectRLEnv):
         self._gripper_dof_idx, _ = self.robot.find_joints(self.cfg.gripper_dof_name)
         self.haw_ur5_dof_idx, _ = self.robot.find_joints(self.cfg.haw_ur5_dof_name)
         self.action_scale = self.cfg.action_scale
+        joint_init_state = torch.cat(
+            (
+                torch.tensor(self.cfg.arm_joints_init_state, device="cuda:0"),
+                torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda:0"),
+            ),
+            dim=0,
+        )
 
-        self.robot.data.default_joint_pos = self.cfg.joint_init_state.repeat(
+        self.robot.data.default_joint_pos = joint_init_state.repeat(
             self.scene.num_envs, 1
         )
+
+        # Statistics for rewards
+        self.total_penalty_alive: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_penalty_vel: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_penalty_cube_out_of_sight: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_penalty_distance_cube_to_goal: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_torque_limit_exeeded_penalty: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_goal_reached_reward: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_torque_penalty: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+        self.total_dist_cube_cam_penalty: torch.Tensor = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
+
+        self.statistics = [
+            self.total_penalty_alive,
+            self.total_penalty_vel,
+            self.total_penalty_cube_out_of_sight,
+            self.total_penalty_distance_cube_to_goal,
+            self.total_torque_limit_exeeded_penalty,
+            self.total_goal_reached_reward,
+            self.total_torque_penalty,
+            self.total_dist_cube_cam_penalty,
+        ]
 
         # Holds the current joint positions and velocities
         self.live_joint_pos: torch.Tensor = self.robot.data.joint_pos
@@ -208,7 +252,8 @@ class HawUr5Env(DirectRLEnv):
             self.jointpos_script_GT = current_main_joint_positions_sim.clone()
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
-        # Get actions
+        # Normalize the actions -1 and 1
+        actions = torch.tanh(actions)
         # Separate the main joint actions (first 6) and the gripper action (last one)
         main_joint_deltas = actions[:, :6]
         gripper_action = actions[:, 6]  # Shape: (num_envs)
@@ -354,7 +399,8 @@ class HawUr5Env(DirectRLEnv):
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
-        joint_pos += torch.rand_like(joint_pos) * 0.1
+        randomness = (torch.rand_like(joint_pos) * 2 - 1) * 0.2
+        joint_pos += randomness
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
@@ -363,6 +409,44 @@ class HawUr5Env(DirectRLEnv):
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
         self.data_age[env_ids] = 0
         self.goal_reached[env_ids] = 0
+
+        # Reset statistics
+        if (
+            not any(stat is None for stat in self.statistics)
+            and self.cfg.verbose_logging
+        ):
+            for env_id in env_ids:
+                print("-" * 20)
+                print(f"Resetting environment {env_id}")
+                print(f"Statistics")
+                print(f"Total penalty alive: {self.total_penalty_alive[env_id]}")
+                print(f"Total penalty vel: {self.total_penalty_vel[env_id]}")
+                print(
+                    f"Total penalty cube out of sight: {self.total_penalty_cube_out_of_sight[env_id]}"
+                )
+                print(
+                    f"Total penalty distance cube to goal: {self.total_penalty_distance_cube_to_goal[env_id]}"
+                )
+                print(
+                    f"Total torque limit exeeded penalty: {self.total_torque_limit_exeeded_penalty[env_id]}"
+                )
+                print(
+                    f"Total goal reached reward: {self.total_goal_reached_reward[env_id]}"
+                )
+                print(f"Total torque penalty: {self.total_torque_penalty[env_id]}")
+                print(
+                    f"Total dist cube cam penalty: {self.total_dist_cube_cam_penalty[env_id]}"
+                )
+                print("-" * 20)
+
+            self.total_penalty_alive[env_ids] = 0  # type: ignore
+            self.total_penalty_vel[env_ids] = 0  # type: ignore
+            self.total_penalty_cube_out_of_sight[env_ids] = 0  # type: ignore
+            self.total_penalty_distance_cube_to_goal[env_ids] = 0  # type: ignore
+            self.total_torque_limit_exeeded_penalty[env_ids] = 0  # type: ignore
+            self.total_goal_reached_reward[env_ids] = 0  # type: ignore
+            self.total_torque_penalty[env_ids] = 0  # type: ignore
+            self.total_dist_cube_cam_penalty[env_ids] = 0  # type: ignore
 
         # # Reset Cube Pos
         # if self.cfg.pp_setup:
@@ -395,7 +479,7 @@ class HawUr5Env(DirectRLEnv):
             return False
 
     def _get_rewards(self) -> torch.Tensor:
-        total_reward = compute_rewards(
+        rewards = compute_rewards(
             self.cfg.alive_reward_scaling,
             self.reset_terminated,
             self.live_joint_pos[:, : len(self._arm_dof_idx)],
@@ -415,27 +499,18 @@ class HawUr5Env(DirectRLEnv):
             self.dist_cube_cam,
             self.cfg.dist_cube_cam_penalty_scaling,
         )
-        # if self.torque_limit_exeeded.any():
-        #     print(f"Torque limit exeeded: {self.torque_limit_exeeded}")
-        # print all shapes of the inputs with their names
-        # print(
-        #     f"Shapes: \n"
-        #     f"reset_terminated: {self.reset_terminated.shape}\n"
-        #     f"arm_joint_pos: {self.live_joint_pos[:, : len(self._arm_dof_idx)].shape}\n"
-        #     f"arm_joint_vel: {self.live_joint_vel[:, : len(self._arm_dof_idx)].shape}\n"
-        #     f"arm_joint_torque: {self.live_joint_torque[:, : len(self._arm_dof_idx)].shape}\n"
-        #     f"gripper_joint_pos: {self.live_joint_pos[:, : len(self._gripper_dof_idx)].shape}\n"
-        #     f"gripper_joint_vel: {self.live_joint_vel[:, : len(self._gripper_dof_idx)].shape}\n"
-        #     f"vel_penalty_scaling: {self.cfg.vel_penalty_scaling}\n"
-        #     f"torque_penalty_scaling: {self.cfg.torque_penalty_scaling}\n"
-        #     f"data_age: {self.data_age.shape}\n"
-        #     f"cube_out_of_sight_penalty_scaling: {self.cfg.cube_out_of_sight_penalty_scaling}\n"
-        #     f"distance_cube_to_goal_pos: {self.cube_distance_to_goal.shape}\n"
-        #     f"distance_cube_to_goal_penalty_scaling: {self.cfg.distance_cube_to_goal_penalty_scaling}\n"
-        #     f"goal_reached: {self.goal_reached.shape}\n"
-        #     f"goal_reached_scaling: {self.cfg.goal_reached_scaling}\n"
-        # )
-        # print(f"Total Reward shape in function: {total_reward.shape}")
+
+        self.total_penalty_alive += rewards[0]
+        self.total_penalty_vel += rewards[1]
+        self.total_penalty_cube_out_of_sight += rewards[2]
+        self.total_penalty_distance_cube_to_goal += rewards[3]
+        self.total_torque_limit_exeeded_penalty += rewards[4]
+        self.total_goal_reached_reward += rewards[5]
+        self.total_torque_penalty += rewards[6]
+        self.total_dist_cube_cam_penalty += rewards[7]
+
+        total_reward = torch.sum(rewards, dim=0)
+
         return total_reward
 
 
@@ -482,14 +557,15 @@ def compute_rewards(
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
-    reward = (
-        penalty_alive
-        + penalty_vel
-        + penalty_cube_out_of_sight
-        + penalty_distance_cube_to_goal
-        + torque_limit_exeeded_penalty
-        + goal_reached_reward
-        + torque_penalty
-        + dist_cube_cam_penalty
+    return torch.stack(
+        [
+            penalty_alive,
+            penalty_vel,
+            penalty_cube_out_of_sight,
+            penalty_distance_cube_to_goal,
+            torque_limit_exeeded_penalty,
+            goal_reached_reward,
+            torque_penalty,
+            dist_cube_cam_penalty,
+        ]
     )
-    return reward

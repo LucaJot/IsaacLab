@@ -76,42 +76,37 @@ class EventCfg:
 
 @configclass
 class HawUr5EnvCfg(DirectRLEnvCfg):
+
+    verbose_logging = False
+
     # env
     action_space = 7
     f_update = 120
     observation_space = 36
     state_space = 0
-    episode_length_s = 1
+    episode_length_s = 3
 
-    arm_joints_init_state: list[float] = [0.0, -1.92, 1.92, -3.14, -1.57, 0.0]
-    joint_init_state = torch.cat(
-        (
-            torch.tensor(arm_joints_init_state, device="cuda:0"),
-            torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda:0"),
-        ),
-        dim=0,
-    )
+    arm_joints_init_state: list[float] = [0.0, -1.92, 2, -3.14, -1.57, 0.0]
+
     cube_init_state: tuple[float, float, float] = (1.0, 0.0, 1.0)
 
     alive_reward_scaling = +0.1
     terminated_penalty_scaling = -1.0
-    vel_penalty_scaling = -0.001
-    torque_penalty_scaling = -0.001
-    torque_limit_exeeded_penalty_scaling = -10
-    cube_out_of_sight_penalty_scaling = -0.01
-    distance_cube_to_goal_penalty_scaling = -0.001
+    vel_penalty_scaling = -0.00
+    torque_penalty_scaling = -0.0001
+    torque_limit_exeeded_penalty_scaling = -1
+    cube_out_of_sight_penalty_scaling = -0.0001
+    distance_cube_to_goal_penalty_scaling = -0.1
     goal_reached_scaling = 10.0
-    dist_cube_cam_penalty_scaling = -1.0
+    dist_cube_cam_penalty_scaling = -0.01
 
-    torque_limit = 200.0
+    torque_limit = 500.0
 
     decimation = 2
-    action_scale = 0.2
+    action_scale = 0.7
     v_cm = 35  # cm/s
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
-
-    verbose_logging = False
 
     # simulation
     sim: SimulationCfg = SimulationCfg(

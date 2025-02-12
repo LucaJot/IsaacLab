@@ -115,7 +115,7 @@ def main(
     env_cfg.arm_joints_init_state = (
         args_cli.arm_initpose
         if args_cli.arm_initpose is not None
-        else [0.0, -1.92, 1.92, -3.14, -1.57, 0.0]
+        else env_cfg.arm_joints_init_state
     )
     agent_cfg.max_iterations = (
         args_cli.max_iterations
