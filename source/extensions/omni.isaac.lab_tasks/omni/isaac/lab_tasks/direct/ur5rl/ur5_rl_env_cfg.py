@@ -103,7 +103,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     goal_reached_scaling = 10.0
     dist_cube_cam_penalty_scaling = -1.0
 
-    torque_limit = 100.0
+    torque_limit = 200.0
 
     decimation = 2
     action_scale = 0.2

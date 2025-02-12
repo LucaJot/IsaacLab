@@ -275,7 +275,6 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # print(f"Mean distance camera to cube: {self.dist_cube_cam}")
-
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
             (
