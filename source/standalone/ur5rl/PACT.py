@@ -71,74 +71,7 @@ import torch
 import gymnasium as gym
 from omni.isaac.lab.envs import DirectRLEnv
 
-
-# Real Environment Wrapper #! TODO FERTIGSTELLEN
-class RealUR5Env(DirectRLEnv):
-    """Wrapper to mimic an IsaacGym environment but fetch real sensor data."""
-
-    def __init__(self, ur5_controller, realsense_node, cube_goal_pos):
-        self.ur5_controller = ur5_controller
-        self.realsense_node = realsense_node
-        self.cube_goal_pos = cube_goal_pos
-
-    def get_observations(self):
-        """Fetch real-world joint states and cube position."""
-        real_joint_states = get_current_joint_pos_from_real_robot(self.ur5_controller)
-        cube_pos, data_age, z = get_current_cube_pos_from_real_robot(
-            self.realsense_node
-        )
-        cube_pos = torch.from_numpy(cube_pos).to("cuda:0")
-        data_age = torch.from_numpy(data_age).to("cuda:0")
-        z = torch.from_numpy(z).to("cuda:0")
-
-        cube_distance_to_goal = torch.norm(
-            cube_pos - torch.tensor(self.cube_goal_pos, device="cuda:0"),
-            dim=-1,
-            keepdim=True,
-        )
-
-        joint_pos = torch.tensor(
-            real_joint_states["joint_positions"],  # type: ignore
-            device="cuda:0",
-            dtype=torch.float32,
-        ).unsqueeze(0)
-        joint_vel = torch.tensor(
-            real_joint_states["joint_velocities"],  # type: ignore
-            device="cuda:0",
-            dtype=torch.float32,
-        ).unsqueeze(0)
-        joint_torque = torch.tensor(
-            real_joint_states["joint_torques"], device="cuda:0", dtype=torch.float32  # type: ignore
-        ).unsqueeze(0)
-        gripper_state = torch.tensor(
-            real_joint_states["gripper_state"], device="cuda:0", dtype=torch.float32  # type: ignore
-        ).unsqueeze(0)
-
-        obs = torch.cat(
-            (
-                joint_pos.unsqueeze(1),
-                joint_vel.unsqueeze(1),
-                joint_torque.unsqueeze(1),
-                gripper_state.unsqueeze(1),
-                cube_pos.unsqueeze(1),
-                cube_distance_to_goal.unsqueeze(1),
-                data_age.unsqueeze(1).unsqueeze(1),
-                z.unsqueeze(1),
-            ),
-            dim=-1,
-        )
-
-        return {"policy": obs.float().squeeze(1)}
-
-    def reset(self):
-        """Return initial observation."""
-        return self.get_observations(), {}
-
-    def step(self, action):
-        """Send action to UR5 and return new state."""
-        #!HW PROTECTION self.ur5_controller.set_joint_delta(action.squeeze(0).cpu().numpy())
-        obs = self.get_observations()
-        return obs, 0, False, False, {}
+import numpy as np
 
 
 # Separate thread to run the ROS 2 node in parallel to the simulation
@@ -178,21 +111,11 @@ def get_current_joint_pos_from_real_robot(ur5_controller: Ur5JointController):
     return real_joint_positions
 
 
-def run_task(
+def run_task_in_sim(
     env: gym.Env,
-    real_mode: bool,
     log_dir: str,
     resume_path: str,
     agent_cfg: RslRlOnPolicyRunnerCfg,
-    cube_state: tuple[float, float, float] = (1.0, 0.0, 1.0),
-    arm_state: list[float] = [
-        0.0,
-        -1.92,
-        1.92,
-        -3.14,
-        -1.57,
-        0.0,
-    ],
 ):
     """Play with RSL-RL agent."""
     # wrap around environment for rsl-rl
@@ -220,16 +143,16 @@ def run_task(
             if dones[0]:  # type: ignore
                 if info["time_outs"][0]:  # type: ignore
                     print("Time Out!")
-                    return False, False, obs
+                    return False, False, obs, policy
                 else:
                     print("Interrupt detected!")
                     last_obs = obs.clone()
                     torch.save(last_obs, os.path.join(log_dir, "last_obs.pt"))
-                    return False, True, obs
+                    return False, True, obs, policy
 
             if info["observations"]["goal_reached"][0]:  # type: ignore
                 print("Goal Reached!")
-                return True, False, obs
+                return True, False, obs, policy
 
     # close the simulator
     env.close()
@@ -253,28 +176,53 @@ def start_ros_nodes(
 def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     """Get the observations from the real world."""
     # Get the current joint positions from the real robot
-    while ur5_controller.get_joint_observation() == None:
-        pass
     real_joint_positions = ur5_controller.get_joint_observation()
+    while real_joint_positions == None:
+        real_joint_positions = ur5_controller.get_joint_observation()
     cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense_node)
     cube_pos = torch.from_numpy(cube_pos).to("cuda:0")
     data_age = torch.tensor(data_age).to("cuda:0")
     z = torch.tensor(z).to("cuda:0")
 
-    cube_pos = cube_pos.unsqueeze(dim=0)
+    cube_pos = cube_pos[0]
+    cube_goal = torch.tensor(cube_goal_pos).to("cuda:0")
+    cube_distance_to_goal = torch.norm(
+        cube_pos - cube_goal, dim=-1, keepdim=False
+    ).unsqueeze(dim=0)
 
-    cube_distance_to_goal = torch.norm(cube_pos - cube_goal_pos, dim=-1, keepdim=False)
+    real_joint_positions_t = torch.tensor(real_joint_positions["joint_positions"]).to(
+        "cuda:0"
+    )
+    real_joint_velocities_t = torch.tensor(real_joint_positions["joint_velocities"]).to(
+        "cuda:0"
+    )
+    real_joint_torques_t = torch.tensor(real_joint_positions["joint_torques"]).to(
+        "cuda:0"
+    )
+    real_gripper_state_t = (
+        torch.tensor(real_joint_positions["gripper_state"])
+        .to("cuda:0")
+        .unsqueeze(dim=0)
+    )
+
+    # Ensure correct shape for tensors before concatenation
+    real_joint_positions_t = real_joint_positions_t.unsqueeze(0)  # (1, 6)
+    real_joint_velocities_t = real_joint_velocities_t.unsqueeze(0)  # (1, 6)
+    real_joint_torques_t = real_joint_torques_t.unsqueeze(0)  # (1, 6)
+    real_gripper_state_t = real_gripper_state_t
+    cube_pos = cube_pos.unsqueeze(0)  # (1, 3)
+    cube_distance_to_goal = cube_distance_to_goal
 
     obs = torch.cat(
         (
-            real_joint_positions["joint_positions"].unsqueeze(dim=1),
-            real_joint_positions["joint_velocities"].unsqueeze(dim=1),
-            real_joint_positions["joint_torques"].unsqueeze(dim=1),
-            real_joint_positions["gripper_state"].unsqueeze(dim=1),
+            real_joint_positions_t.unsqueeze(dim=1),
+            real_joint_velocities_t.unsqueeze(dim=1),
+            real_joint_torques_t.unsqueeze(dim=1),
+            real_gripper_state_t.unsqueeze(dim=1).unsqueeze(dim=1),
             cube_pos.unsqueeze(dim=1),
             cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
             data_age.unsqueeze(dim=1).unsqueeze(dim=1),
-            z.unsqueeze(dim=1),
+            z.unsqueeze(dim=1).unsqueeze(dim=1),
         ),
         dim=-1,
     )
@@ -282,15 +230,19 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     obs = obs.float()
     obs = obs.squeeze(dim=1)
 
-    observations = {"policy": obs}
-    return observations
+    return obs
 
 
-def run_task_in_real(policy, ur5_controller, realsense_node, cube_goal_pos):
+def step_real(policy, ur5_controller, realsense_node, cube_goal_pos):
     """Play with RSL-RL agent in real world."""
     # Get the current joint positions from the real robot
     obs = get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos)
+    action = policy(obs)
+    print(f"Action: {action}")
     print(f"Observations: {obs}")
+    # Execute the action on the real robot
+    #!ur5_controller.set_joint_delta(action.cpu().numpy())
+    return obs
 
 
 def get_current_cube_pos_from_real_robot(realsense_node: realsense_obs_reciever):
@@ -353,33 +305,18 @@ def load_most_recent_model(
     return policy
 
 
-def load_policy_only():
-    """Load the trained RL policy WITHOUT requiring an environment."""
-
-    agent_cfg: Ur5RLPPORunnerCfg = Ur5RLPPORunnerCfg()
-
-    # Find the most recent checkpoint
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-    log_root_path = os.path.abspath(log_root_path)
-    print(f"[INFO] Loading experiment from directory: {log_root_path}")
-
-    resume_path = get_checkpoint_path(
-        log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
-    )
-
-    print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-
-    policy = torch.jit.load(resume_path)
-
-    policy.eval()  # Put policy in inference mode
-
-    return policy
+def goal_reached(realsense_node, goal_pos, threshold=0.05):
+    """Check if the goal is reached."""
+    cube_pos, _, _ = get_current_cube_pos_from_real_robot(realsense_node)
+    cube_pos = cube_pos[0]
+    distance = np.linalg.norm(cube_pos - goal_pos)
+    return distance < threshold
 
 
 def main():
     """Main function."""
     # Set the goal state of the cube
-    cube_goal_pos = torch.tensor([1.0, -0.1, 0.8], device="cuda:0")
+    cube_goal_pos = [1.0, -0.1, 0.8]
 
     # Set rl learning configuration
     agent_cfg, log_dir, resume_path = set_learning_config()
@@ -415,18 +352,12 @@ def main():
     env = gymnasium.make(
         id="Isaac-Ur5-RL-Direct-v0",
         cfg=env_cfg,
-        cube_goal_pos=[1.0, -0.1, 0.8],
+        cube_goal_pos=cube_goal_pos,
     )
 
     # Run the task in the simulator
-    success, interrupt, obs = run_task(
-        env,
-        real_mode=False,
-        log_dir=log_dir,
-        resume_path=resume_path,
-        agent_cfg=agent_cfg,
-        arm_state=real_joint_positions[:-1],  # type: ignore
-        cube_state=tuple(cube_pos),
+    success, interrupt, obs, policy = run_task_in_sim(
+        env, log_dir=log_dir, resume_path=resume_path, agent_cfg=agent_cfg
     )
     # --------------------------------------------------------------------
 
@@ -439,10 +370,9 @@ def main():
         # Create real env wrapper
         # real_env = RealUR5Env(ur5_control, realsense, cube_goal_pos)
 
-        policy = load_policy_only()
-        print("Policy loaded!")
-        action = policy(obs)
-        print(f"Action: {action}")
+        while not goal_reached(realsense, cube_goal_pos):
+            obs = step_real(policy, ur5_control, realsense, cube_goal_pos)
+            print(f"Observations: {obs}")
 
     if interrupt:
         # Get the interrupt joint positions from the real robot

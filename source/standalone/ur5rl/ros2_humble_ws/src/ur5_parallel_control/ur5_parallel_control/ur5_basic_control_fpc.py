@@ -127,14 +127,14 @@ class Ur5JointController(Node):
 
     def get_joint_observation(self) -> dict | None:
         obs = {
-            "joint_positions": [self.live_joint_positions],
-            "joint_velocities": [self.live_joint_velocities],
-            "joint_torques": [self.live_joint_torques],
-            "gripper_state": [self.current_gripper_state],
+            "joint_positions": self.live_joint_positions,
+            "joint_velocities": self.live_joint_velocities,
+            "joint_torques": self.live_joint_torques,
+            "gripper_state": self.current_gripper_state,
         }
 
         # Check if any of the values are None
-        if not all(obs.values()):
+        if any(value is None for value in obs.values()):
             return None
         return obs
 
