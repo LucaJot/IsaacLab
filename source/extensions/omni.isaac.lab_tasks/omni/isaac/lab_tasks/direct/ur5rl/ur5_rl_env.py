@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 import torch
 from collections.abc import Sequence
 
@@ -134,6 +135,12 @@ class HawUr5Env(DirectRLEnv):
         self.gripper_action_bin: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device, dtype=torch.bool
         )
+        self.gripper_locked = torch.zeros(
+            self.scene.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.gripper_steps = torch.zeros(
+            self.scene.num_envs, device=self.device, dtype=torch.float32
+        )
 
         # Cube detection
         self.cubedetector = CubeDetector(num_envs=self.scene.num_envs)
@@ -198,34 +205,58 @@ class HawUr5Env(DirectRLEnv):
     def _gripper_action_to_joint_targets(
         self, gripper_action: torch.Tensor
     ) -> torch.Tensor:
-        """_summary_
-        Convert gripper action [-1,1] to the corresponding angles of all gripper joints.
+        """Converts gripper action [-1,1] into actual joint positions while respecting locking logic."""
 
-        Args:
-            gripper_action (torch.Tensor): single value between -1 and 1 (e.g. tensor([0.], device='cuda:0'))
-
-        Returns:
-            torch.Tensor: _description_
-        """
-        # Convert each gripper action to the corresponding 6 gripper joint positions (min max 36 = joint limit)
-        # gripper_action = gripper_action * 0 if gripper_action < 0 else 1
+        # Step 1: Update `gripper_action_bin` only for unlocked grippers
         self.gripper_action_bin = torch.where(
-            gripper_action > 0,
-            torch.tensor(1.0, device="cuda:0"),
-            torch.tensor(-1.0, device="cuda:0"),
+            ~self.gripper_locked,  # Only update where gripper is unlocked
+            torch.where(
+                gripper_action > 0,
+                torch.tensor(1.0, device="cuda:0"),
+                torch.tensor(-1.0, device="cuda:0"),
+            ),
+            self.gripper_action_bin,  # Keep previous value for locked grippers
         )
 
+        # Step 2: Lock the gripper if action bin has been updated
+        self.gripper_locked = torch.where(
+            ~self.gripper_locked,  # If gripper is unlocked
+            torch.tensor(True, device="cuda:0"),  # Lock it
+            self.gripper_locked,  # Keep it locked if already locked
+        )
+
+        # Step 3: Gradually update `gripper_steps` towards `gripper_action_bin`
+        step_size = 0.1
+        self.gripper_steps = torch.where(
+            self.gripper_locked,  # If gripper is locked
+            self.gripper_steps
+            + step_size * self.gripper_action_bin,  # Increment/decrement towards target
+            self.gripper_steps,  # Keep unchanged if unlocked
+        )
+
+        # Step 4: Unlock gripper once `gripper_steps` reaches `gripper_action_bin`
+        reached_target = torch.isclose(
+            self.gripper_steps, self.gripper_action_bin, atol=0.01
+        )
+        self.gripper_locked = torch.where(
+            reached_target,  # Unlock when target is reached
+            torch.tensor(False, device="cuda:0"),
+            self.gripper_locked,
+        )
+
+        # Step 5: Convert `gripper_steps` into joint targets
         gripper_joint_targets = torch.stack(
             [
-                35 * self.gripper_action_bin,  # "left_outer_knuckle_joint"
-                -35 * self.gripper_action_bin,  # "left_inner_finger_joint"
-                -35 * self.gripper_action_bin,  # "left_inner_knuckle_joint"
-                -35 * self.gripper_action_bin,  # "right_inner_knuckle_joint"
-                35 * self.gripper_action_bin,  # "right_outer_knuckle_joint"
-                35 * self.gripper_action_bin,  # "right_inner_finger_joint"
+                35 * self.gripper_steps,  # "left_outer_knuckle_joint"
+                -35 * self.gripper_steps,  # "left_inner_finger_joint"
+                -35 * self.gripper_steps,  # "left_inner_knuckle_joint"
+                -35 * self.gripper_steps,  # "right_inner_knuckle_joint"
+                35 * self.gripper_steps,  # "right_outer_knuckle_joint"
+                35 * self.gripper_steps,  # "right_inner_finger_joint"
             ],
             dim=1,
         )  # Shape: (num_envs, 6)
+
         return gripper_joint_targets
 
     def _check_drift(self):
@@ -337,6 +368,15 @@ class HawUr5Env(DirectRLEnv):
 
         obs = obs.float()
         obs = obs.squeeze(dim=1)
+
+        if torch.isnan(obs).any():
+            warnings.warn("[WARNING] NaN detected in observations!", UserWarning)
+            print(f"[DEBUG] NaN found in observation: {obs}\nReplacing with 0.0")
+            obs = torch.where(
+                torch.isnan(obs),
+                torch.tensor(0.0, dtype=obs.dtype, device=obs.device),
+                obs,
+            )
 
         observations = {"policy": obs, "goal_reached": self.goal_reached}
         return observations
