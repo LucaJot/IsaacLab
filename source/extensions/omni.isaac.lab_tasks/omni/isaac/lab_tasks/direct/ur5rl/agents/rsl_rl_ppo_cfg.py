@@ -20,7 +20,7 @@ class Ur5RLPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     experiment_name = "ur5_rl_direct"
     empirical_normalization = True
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=0.7,
+        init_noise_std=0.6,
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[256, 128, 64],
         activation="elu",

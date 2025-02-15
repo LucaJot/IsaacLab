@@ -135,7 +135,7 @@ class HawUr5Env(DirectRLEnv):
         self.action_dim = len(self._arm_dof_idx) + len(self._gripper_dof_idx)
 
         self.gripper_action_bin: torch.Tensor = torch.zeros(
-            self.scene.num_envs, device=self.device, dtype=torch.bool
+            self.scene.num_envs, device=self.device, dtype=torch.float32
         )
         self.gripper_locked = torch.zeros(
             self.scene.num_envs, device=self.device, dtype=torch.bool
@@ -171,6 +171,8 @@ class HawUr5Env(DirectRLEnv):
             "pos_sensor_y": [],
             "dist_cube_cam": [],
         }
+
+        self.DEBUG_GRIPPER = True
 
     def set_arm_init_pose(self, joint_angles: list[float64]) -> bool:
 
@@ -262,7 +264,7 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # Step 3: Gradually update `gripper_steps` towards `gripper_action_bin`
-        step_size = 0.1
+        step_size = 0.01
         self.gripper_steps = torch.where(
             self.gripper_locked,  # If gripper is locked
             self.gripper_steps
@@ -270,18 +272,18 @@ class HawUr5Env(DirectRLEnv):
             self.gripper_steps,  # Keep unchanged if unlocked
         )
 
+        # Ensure no faulty values are present
+        self.gripper_steps = torch.clamp(self.gripper_steps, -1.0, 1.0)
+
         # Step 4: Unlock gripper once `gripper_steps` reaches `gripper_action_bin`
         reached_target = torch.isclose(
-            self.gripper_steps, self.gripper_action_bin, atol=0.01
+            self.gripper_steps, self.gripper_action_bin, atol=0.005
         )
         self.gripper_locked = torch.where(
             reached_target,  # Unlock when target is reached
             torch.tensor(False, device="cuda:0"),
             self.gripper_locked,
         )
-
-        # Ensure no faulty values are present
-        torch.clamp(self.gripper_steps, -1.0, 1.0)
 
         # Step 5: Convert `gripper_steps` into joint targets
         gripper_joint_targets = torch.stack(
@@ -295,6 +297,13 @@ class HawUr5Env(DirectRLEnv):
             ],
             dim=1,
         )  # Shape: (num_envs, 6)
+
+        # print(
+        #     f"Env0 Debug\nGripperAction: {gripper_action[0]}\nGripperSteps: {self.gripper_steps[0]}\nGripperLocked: {self.gripper_locked[0]}\nGripperActionBin: {self.gripper_action_bin[0]}\nGripperJointTargets: {gripper_joint_targets[0]}\nReached Target: {reached_target[0]} \n"
+        # )
+        # print(self.gripper_steps.device, self.gripper_action_bin.device)
+        # print(self.gripper_steps.dtype, self.gripper_action_bin.dtype)
+        # print("Difference:", (self.gripper_steps[0] - self.gripper_action_bin[0]))
 
         return gripper_joint_targets
 
@@ -702,7 +711,7 @@ def compute_rewards(
     # )
 
     # Option 2 for approach reward: Exponential decay of reward with distance
-    k = 0.5
+    k = 3.5
     approach_reward = torch.where(
         dist_cube_cam > 0.0,
         approach_reward_scaling * torch.exp(-k * dist_cube_cam),

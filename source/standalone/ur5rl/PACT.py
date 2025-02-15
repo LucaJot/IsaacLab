@@ -370,8 +370,8 @@ def goal_reached(realsense_node, goal_pos, threshold=0.05):
 # Get init state from real hw or stored state
 use_real_hw = False
 # Resume the last training
-resume = True
-EXPERIMENT_NAME = "nur_approach_rew"
+resume = False
+EXPERIMENT_NAME = "_"
 
 
 def main():

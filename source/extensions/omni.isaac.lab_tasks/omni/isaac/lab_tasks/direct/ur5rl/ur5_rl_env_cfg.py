@@ -102,7 +102,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     goal_reached_scaling = 10.0
     approach_reward = 0.02
 
-    torque_limit = 500.0
+    torque_limit = 90000.0  #! DEBUG
 
     decimation = 2
     action_scale = 0.7
