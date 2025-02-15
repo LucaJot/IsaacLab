@@ -86,7 +86,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 2.5
+    episode_length_s = 3.5
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
@@ -100,7 +100,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     cube_out_of_sight_penalty_scaling = -0.0001
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
-    approach_reward = 0.05
+    approach_reward = 0.02
 
     torque_limit = 500.0
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import os
 import warnings
 import torch
 from collections.abc import Sequence
@@ -160,6 +162,15 @@ class HawUr5Env(DirectRLEnv):
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
+
+        #! LOGGING
+        self.LOG_CUBE_POS = False
+        self.log_dir = "/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir"
+        self.episode_data = {
+            "pos_sensor_x": [],
+            "pos_sensor_y": [],
+            "dist_cube_cam": [],
+        }
 
     def set_arm_init_pose(self, joint_angles: list[float64]) -> bool:
 
@@ -410,9 +421,17 @@ class HawUr5Env(DirectRLEnv):
         obs = obs.float()
         obs = obs.squeeze(dim=1)
 
-        print(
-            f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nDistCubeCamMinimal: {self.dist_cube_cam_minimal[0]}\nCubePos:{cube_pos[0]}\nCubePosW:{cube_pos_w[0]}\nCubeDistToGoal:{self.cube_distance_to_goal[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
-        )
+        # print(
+        #     f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nDistCubeCamMinimal: {self.dist_cube_cam_minimal[0]}\nCubePos:{cube_pos[0]}\nCubePosW:{cube_pos_w[0]}\nCubeDistToGoal:{self.cube_distance_to_goal[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
+        # )
+        #! LOGGING
+        # ✅ Save only for the first environment (Env0)
+        if self.LOG_CUBE_POS:
+            self.episode_data["pos_sensor_x"].append(float(pos_sensor[0][0].cpu()))
+            self.episode_data["pos_sensor_y"].append(float(pos_sensor[0][1].cpu()))
+            self.episode_data["dist_cube_cam"].append(
+                float(self.dist_cube_cam[0].cpu())
+            )
 
         if torch.isnan(obs).any():
             warnings.warn("[WARNING] NaN detected in observations!", UserWarning)
@@ -544,6 +563,22 @@ class HawUr5Env(DirectRLEnv):
         # self.cube_object.write_root_pose_to_sim(cube_rootstate[:, :7])
         # self.cube_object.write_root_velocity_to_sim(cube_rootstate[:, 7:])
 
+        #! LOGGING
+        if self.LOG_CUBE_POS:
+            if 0 in env_ids:
+                episode_id = len(
+                    os.listdir(self.log_dir)
+                )  # Unique filename for each episode
+                with open(f"{self.log_dir}/episode_{episode_id}.json", "w") as f:
+                    json.dump(self.episode_data, f)
+
+                # ✅ Reset the storage for next episode
+                self.episode_data = {
+                    "pos_sensor_x": [],
+                    "pos_sensor_y": [],
+                    "dist_cube_cam": [],
+                }
+
     def set_joint_angles_absolute(self, joint_angles: list[float64]) -> bool:
         try:
             # Set arm joint angles from list
@@ -667,7 +702,7 @@ def compute_rewards(
     # )
 
     # Option 2 for approach reward: Exponential decay of reward with distance
-    k = 1.0
+    k = 0.5
     approach_reward = torch.where(
         dist_cube_cam > 0.0,
         approach_reward_scaling * torch.exp(-k * dist_cube_cam),
