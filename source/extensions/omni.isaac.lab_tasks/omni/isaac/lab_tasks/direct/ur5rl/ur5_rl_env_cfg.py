@@ -56,7 +56,7 @@ class EventCfg:
         params={
             "asset_cfg": SceneEntityCfg("ur5", body_names=".*"),
             "static_friction_range": (0.7, 1.3),
-            "dynamic_friction_range": (1.0, 1.0),
+            "dynamic_friction_range": (0.8, 1.0),
             "restitution_range": (1.0, 1.0),
             "num_buckets": 250,
         },
@@ -66,8 +66,10 @@ class EventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("ur5", joint_names=".*"),
-            "stiffness_distribution_params": (0.75, 1.5),
-            "damping_distribution_params": (0.3, 3.0),
+            # Narrow the stiffness distribution from (0.75, 1.5) → (0.9, 1.1)
+            "stiffness_distribution_params": (0.9, 1.1),
+            # Narrow the damping distribution from (0.3, 3.0) → (0.8, 1.2)
+            "damping_distribution_params": (0.8, 1.2),
             "operation": "scale",
             "distribution": "log_uniform",
         },
@@ -77,28 +79,28 @@ class EventCfg:
 @configclass
 class HawUr5EnvCfg(DirectRLEnvCfg):
 
-    verbose_logging = False
+    verbose_logging = True
 
     # env
     action_space = 7
     f_update = 120
-    observation_space = 36
+    observation_space = 27
     state_space = 0
-    episode_length_s = 3
+    episode_length_s = 2.5
 
-    arm_joints_init_state: list[float] = [0.0, -1.92, 2, -3.14, -1.57, 0.0]
+    arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
     cube_init_state: tuple[float, float, float] = (1.0, 0.0, 1.0)
 
-    alive_reward_scaling = +0.1
-    terminated_penalty_scaling = -1.0
+    alive_reward_scaling = +0.01
+    terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
     torque_penalty_scaling = -0.0001
-    torque_limit_exeeded_penalty_scaling = -1
+    torque_limit_exeeded_penalty_scaling = -3
     cube_out_of_sight_penalty_scaling = -0.0001
-    distance_cube_to_goal_penalty_scaling = -0.1
+    distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
-    dist_cube_cam_penalty_scaling = -0.01
+    approach_reward = 0.05
 
     torque_limit = 500.0
 
@@ -110,7 +112,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
+        dt=1 / f_update,
         render_interval=decimation,
     )
 
@@ -129,8 +131,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     camera_rgb_cfg = CameraCfg(
         prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/rgb_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
-        height=240,
-        width=424,
+        height=120,
+        width=212,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0,  # 0.188 für Realsense D435
@@ -147,8 +149,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     camera_depth_cfg = CameraCfg(
         prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/onrobot_rg6_base_link/depth_camera",  # onrobot_rg6_model/onrobot_rg6_base_link/camera",
         update_period=0,
-        height=240,
-        width=424,
+        height=120,
+        width=212,
         data_types=["distance_to_camera"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0,

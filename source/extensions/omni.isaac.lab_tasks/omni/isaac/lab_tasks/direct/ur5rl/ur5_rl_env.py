@@ -104,7 +104,7 @@ class HawUr5Env(DirectRLEnv):
         self.total_torque_penalty: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device
         )
-        self.total_dist_cube_cam_penalty: torch.Tensor = torch.zeros(
+        self.cube_approach_reward: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device
         )
 
@@ -116,7 +116,7 @@ class HawUr5Env(DirectRLEnv):
             self.total_torque_limit_exeeded_penalty,
             self.total_goal_reached_reward,
             self.total_torque_penalty,
-            self.total_dist_cube_cam_penalty,
+            self.cube_approach_reward,
         ]
 
         # Holds the current joint positions and velocities
@@ -153,10 +153,35 @@ class HawUr5Env(DirectRLEnv):
         self.data_age = torch.zeros(self.scene.num_envs, device=self.device)
         self.cube_distance_to_goal = torch.ones(self.scene.num_envs, device=self.device)
         self.dist_cube_cam = torch.zeros(self.scene.num_envs, device=self.device)
+        self.dist_cube_cam_minimal = torch.zeros(
+            self.scene.num_envs, device=self.device
+        )
         self.mean_dist_cam_cube = 0
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
+
+    def set_arm_init_pose(self, joint_angles: list[float64]) -> bool:
+
+        if len(joint_angles) != 6:
+            warnings.warn(
+                f"[WARNING] Expected 6 joint angles, got {len(joint_angles)}",
+                UserWarning,
+            )
+            return False
+        else:
+            joint_init_state = torch.cat(
+                (
+                    torch.tensor(joint_angles, device="cuda:0"),
+                    torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device="cuda:0"),
+                ),
+                dim=0,
+            )
+
+            self.robot.data.default_joint_pos = joint_init_state.repeat(
+                self.scene.num_envs, 1
+            )
+            return True
 
     def get_joint_pos(self):
         return self.live_joint_pos
@@ -244,6 +269,9 @@ class HawUr5Env(DirectRLEnv):
             self.gripper_locked,
         )
 
+        # Ensure no faulty values are present
+        torch.clamp(self.gripper_steps, -1.0, 1.0)
+
         # Step 5: Convert `gripper_steps` into joint targets
         gripper_joint_targets = torch.stack(
             [
@@ -276,10 +304,10 @@ class HawUr5Env(DirectRLEnv):
         if not torch.allclose(
             current_main_joint_positions, current_main_joint_positions_sim, atol=1e-2
         ):
-            if self.cfg.verbose_logging:
-                print(
-                    f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
-                )
+            # if self.cfg.verbose_logging:
+            #     print(
+            #         f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
+            #     )
             self.jointpos_script_GT = current_main_joint_positions_sim.clone()
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
@@ -322,12 +350,18 @@ class HawUr5Env(DirectRLEnv):
         )
 
     def _get_observations(self) -> dict:
+
+        self.dist_cube_cam_minimal = torch.where(
+            self.dist_cube_cam > 0,
+            torch.minimum(self.dist_cube_cam, self.dist_cube_cam_minimal),
+            self.dist_cube_cam_minimal,
+        )
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
 
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
 
-        cube_pos, cube_pos_w, data_age, dist_cube_cam = (
+        cube_pos, cube_pos_w, data_age, dist_cube_cam, pos_sensor = (
             self.cubedetector.get_cube_positions(
                 rgb_images=rgb.cpu().numpy(),
                 depth_images=depth.squeeze(-1).cpu().numpy(),
@@ -344,9 +378,15 @@ class HawUr5Env(DirectRLEnv):
         cube_pos_w = torch.from_numpy(cube_pos_w).to(self.device)
         self.data_age = torch.tensor(data_age, device=self.device)
         self.dist_cube_cam = torch.tensor(dist_cube_cam, device=self.device)
+        pos_sensor = torch.from_numpy(pos_sensor).to(self.device)
+
+        # If env has been reset, set dist_prev to -1
+        self.dist_cube_cam_minimal = torch.where(
+            self.episode_length_buf == 0, 99.0, self.dist_cube_cam_minimal
+        )
 
         # Compute distance cube position to goal position
-        self.cube_distance_to_goal = torch.norm(
+        self.cube_distance_to_goal = torch.linalg.vector_norm(
             cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=False
         )
 
@@ -362,12 +402,17 @@ class HawUr5Env(DirectRLEnv):
                 self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.dist_cube_cam.unsqueeze(dim=1).unsqueeze(dim=1),
+                pos_sensor.unsqueeze(dim=1),
             ),
             dim=-1,
         )
 
         obs = obs.float()
         obs = obs.squeeze(dim=1)
+
+        print(
+            f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nDistCubeCamMinimal: {self.dist_cube_cam_minimal[0]}\nCubePos:{cube_pos[0]}\nCubePosW:{cube_pos_w[0]}\nCubeDistToGoal:{self.cube_distance_to_goal[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
+        )
 
         if torch.isnan(obs).any():
             warnings.warn("[WARNING] NaN detected in observations!", UserWarning)
@@ -447,15 +492,18 @@ class HawUr5Env(DirectRLEnv):
         self.live_joint_pos[env_ids] = joint_pos
         self.live_joint_vel[env_ids] = joint_vel
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-        self.data_age[env_ids] = 0
-        self.goal_reached[env_ids] = 0
+        self.data_age[env_ids] = 0.0
+        self.cubedetector.reset_data_age(env_ids)  # type: ignore
+        self.goal_reached[env_ids] = 0.0
+        self.dist_cube_cam_minimal[env_ids] = 99.0
 
         # Reset statistics
         if (
             not any(stat is None for stat in self.statistics)
             and self.cfg.verbose_logging
         ):
-            for env_id in env_ids:
+            if 0 in env_ids:  # type: ignore
+                env_id = 0
                 print("-" * 20)
                 print(f"Resetting environment {env_id}")
                 print(f"Statistics")
@@ -474,19 +522,17 @@ class HawUr5Env(DirectRLEnv):
                     f"Total goal reached reward: {self.total_goal_reached_reward[env_id]}"
                 )
                 print(f"Total torque penalty: {self.total_torque_penalty[env_id]}")
-                print(
-                    f"Total dist cube cam penalty: {self.total_dist_cube_cam_penalty[env_id]}"
-                )
+                print(f"Cube approach reward: {self.cube_approach_reward[env_id]}")
                 print("-" * 20)
 
-            self.total_penalty_alive[env_ids] = 0  # type: ignore
-            self.total_penalty_vel[env_ids] = 0  # type: ignore
-            self.total_penalty_cube_out_of_sight[env_ids] = 0  # type: ignore
-            self.total_penalty_distance_cube_to_goal[env_ids] = 0  # type: ignore
-            self.total_torque_limit_exeeded_penalty[env_ids] = 0  # type: ignore
-            self.total_goal_reached_reward[env_ids] = 0  # type: ignore
-            self.total_torque_penalty[env_ids] = 0  # type: ignore
-            self.total_dist_cube_cam_penalty[env_ids] = 0  # type: ignore
+                self.total_penalty_alive[env_ids] = 0  # type: ignore
+                self.total_penalty_vel[env_ids] = 0  # type: ignore
+                self.total_penalty_cube_out_of_sight[env_ids] = 0  # type: ignore
+                self.total_penalty_distance_cube_to_goal[env_ids] = 0  # type: ignore
+                self.total_torque_limit_exeeded_penalty[env_ids] = 0  # type: ignore
+                self.total_goal_reached_reward[env_ids] = 0  # type: ignore
+                self.total_torque_penalty[env_ids] = 0  # type: ignore
+                self.cube_approach_reward[env_ids] = 0  # type: ignore
 
         # # Reset Cube Pos
         # if self.cfg.pp_setup:
@@ -537,19 +583,31 @@ class HawUr5Env(DirectRLEnv):
             self.goal_reached,
             self.cfg.goal_reached_scaling,
             self.dist_cube_cam,
-            self.cfg.dist_cube_cam_penalty_scaling,
+            self.dist_cube_cam_minimal,
+            self.cfg.approach_reward,
         )
 
-        self.total_penalty_alive += rewards[0]
-        self.total_penalty_vel += rewards[1]
-        self.total_penalty_cube_out_of_sight += rewards[2]
-        self.total_penalty_distance_cube_to_goal += rewards[3]
-        self.total_torque_limit_exeeded_penalty += rewards[4]
-        self.total_goal_reached_reward += rewards[5]
-        self.total_torque_penalty += rewards[6]
-        self.total_dist_cube_cam_penalty += rewards[7]
+        # self.total_penalty_alive += rewards[0]
+        # self.total_penalty_vel += rewards[1]
+        # self.total_penalty_cube_out_of_sight += rewards[2]
+        # self.total_penalty_distance_cube_to_goal += rewards[3]
+        # self.total_torque_limit_exeeded_penalty += rewards[4]
+        # self.total_goal_reached_reward += rewards[5]
+        # self.total_torque_penalty += rewards[6]
+        self.cube_approach_reward += rewards[7]
 
-        total_reward = torch.sum(rewards, dim=0)
+        # total_reward = torch.sum(rewards, dim=0)
+
+        total_reward = torch.sum(torch.stack([rewards[7]]), dim=0)
+
+        if torch.isnan(total_reward).any():
+            warnings.warn("[WARNING] NaN detected in rewards!", UserWarning)
+            print(f"[DEBUG] NaN found in rewards: {total_reward}\nReplacing with 0.0")
+            total_reward = torch.where(
+                torch.isnan(total_reward),
+                torch.tensor(0.0, dtype=total_reward.dtype, device=total_reward.device),
+                total_reward,
+            )
 
         return total_reward
 
@@ -573,12 +631,17 @@ def compute_rewards(
     goal_reached: torch.Tensor,
     goal_reached_scaling: float,
     dist_cube_cam: torch.Tensor,
-    dist_cube_cam_penalty_scaling: float,
+    dist_cube_cam_minimal: torch.Tensor,
+    approach_reward_scaling: float,
 ) -> torch.Tensor:
 
     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
     penalty_vel = vel_penalty_scaling * torch.sum(torch.abs(arm_joint_vel), dim=-1)
-    penalty_cube_out_of_sight = cube_out_of_sight_penalty_scaling * data_age
+    penalty_cube_out_of_sight = cube_out_of_sight_penalty_scaling * torch.where(
+        data_age > 0,
+        torch.tensor(1.0, dtype=data_age.dtype, device=data_age.device),
+        torch.tensor(0.0, dtype=data_age.dtype, device=data_age.device),
+    )
     penalty_distance_cube_to_goal = (
         distance_cube_to_goal_penalty_scaling * distance_cube_to_goal_pos
     )
@@ -591,9 +654,23 @@ def compute_rewards(
     )
 
     goal_reached_reward = goal_reached_scaling * goal_reached
-    dist_cube_cam_penalty = torch.where(
-        dist_cube_cam > 0.3,
-        dist_cube_cam_penalty_scaling * dist_cube_cam,
+
+    # Option 1 for approach reward: Minimal distance to cube is stored and improvment rewarded
+    # improvement = dist_cube_cam_minimal - dist_cube_cam
+    # improvement_reward = torch.clamp(improvement, min=0.0) * approach_reward_scaling
+    # approach_reward = torch.where(
+    #     dist_cube_cam > 0,  # only give reward if the cube is in sight
+    #     improvement_reward,  # Reward inversely proportional to distance
+    #     torch.tensor(
+    #         0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device
+    #     ),  # No reward if cube is not in sight
+    # )
+
+    # Option 2 for approach reward: Exponential decay of reward with distance
+    k = 1.0
+    approach_reward = torch.where(
+        dist_cube_cam > 0.0,
+        approach_reward_scaling * torch.exp(-k * dist_cube_cam),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
@@ -606,6 +683,6 @@ def compute_rewards(
             torque_limit_exeeded_penalty,
             goal_reached_reward,
             torque_penalty,
-            dist_cube_cam_penalty,
+            approach_reward,
         ]
     )

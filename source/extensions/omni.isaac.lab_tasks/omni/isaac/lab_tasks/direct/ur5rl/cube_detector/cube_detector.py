@@ -1,3 +1,4 @@
+import warnings
 import rclpy
 from rclpy.node import Node
 import cv2
@@ -15,12 +16,12 @@ class CubeDetector:
         send_joint_command
         """
         self.real = real
-        self.area_thresh = 100 if real else 1000  # ! TEST  70 Reasonable value for real
+        self.area_thresh = 70 if real else 150  # ! TEST  70 Reasonable value for real
         self.clipping_range = 2000.0 if real else 2.0
         self.data_age = np.zeros(num_envs)
         # Init with NaN to indicate that no cube has been detected yet
-        self.last_pos = np.full((num_envs, 3), np.nan)
-        self.last_pos_w = np.full((num_envs, 3), np.nan)
+        self.last_pos = np.full((num_envs, 3), -1.0)
+        self.last_pos_w = np.full((num_envs, 3), -1.0)
 
         self.distance_cam_cube = 2.0
 
@@ -28,13 +29,7 @@ class CubeDetector:
         # increase the age of the data by 1 if no cube detected
         self.data_age[idx] += 1
         # If the cube has been detected before, return the last known position
-        if not np.all(np.isnan(self.last_pos[idx])) and not np.all(
-            np.isnan(self.last_pos_w[idx])
-        ):
-            return self.last_pos[idx], self.last_pos_w[idx]
-        else:
-            # Cube not seen yet -> set it to be far away
-            return [2.0, 2.0, 2.0], [2.0, 2.0, 2.0]
+        return self.last_pos[idx], self.last_pos_w[idx]
 
     def deproject_pixel_to_point(self, cx, cy, fx, fy, pixel, z):
         """
@@ -86,6 +81,12 @@ class CubeDetector:
         p_world = rotated_point + camera_pos_w  # was +
         return p_world
 
+    def reset_data_age(self, env_ids_torch: torch.Tensor):
+        env_ids_np = env_ids_torch.cpu().numpy()
+        self.data_age[env_ids_np] = 0.0
+        self.last_pos[env_ids_np] = [-1.0, -1.0, -1.0]
+        self.last_pos_w[env_ids_np] = [-1.0, -1.0, -1.0]
+
     def get_cube_positions(
         self,
         rgb_images: np.ndarray,
@@ -122,6 +123,7 @@ class CubeDetector:
         cube_positions_w = []
 
         distance_cam_cube = []
+        pos_on_sensor = []
 
         # Make the camera pose relative to the robot base link
         rel_rgb_poses = rgb_poses - robo_rootpose  #! was -
@@ -161,12 +163,18 @@ class CubeDetector:
                 pos, pos_w = self.return_last_pos(env_idx)
                 cube_positions.append(pos)
                 cube_positions_w.append(pos_w)
-                distance_cam_cube.append(2.0)
+                distance_cam_cube.append(-1.0)
+                pos_on_sensor.append([-1.0, -1.0])
             else:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
                 # Shift the contour to the left  to compensate for the offset between the rgb and depth image
                 largest_contour[:, 0, 0] += CAMERA_RGB_2_D_OFFSET  # type: ignore
+                # Clip x to [0, width-1] so that the contour does not go out of bounds
+                largest_contour[:, 0, 0] = np.clip(
+                    largest_contour[:, 0, 0], 0, depth_image_np.shape[1] - 1
+                )
+
                 # Get the moments of the largest contour
                 M = cv2.moments(largest_contour)
 
@@ -178,7 +186,8 @@ class CubeDetector:
                     pos, pos_w = self.return_last_pos(env_idx)
                     cube_positions.append(pos)
                     cube_positions_w.append(pos_w)
-                    distance_cam_cube.append(2.0)
+                    distance_cam_cube.append(-1.0)
+                    pos_on_sensor.append([-1.0, -1.0])
                     continue
 
                 # Get the pixel centroid of the largest contour
@@ -235,36 +244,43 @@ class CubeDetector:
                 cy = cy_px / rgb_image_np.shape[0]
 
                 cube_positions.append(cube_pos_camera_rf)
+                pos_on_sensor.append([cx, cy])
+
+                if np.isnan(cube_pos_camera_rf).any():
+                    warnings.warn("Cube position array has at least one NaN")
+                if np.isnan(cube_pos_w).any():
+                    warnings.warn("Cube position_w array has at least one NaN")
 
                 # Reset the data age for the current env
                 self.data_age[env_idx] = 0
 
+                self.last_pos[env_idx] = cube_pos_camera_rf
+                self.last_pos_w[env_idx] = cube_pos_w
+
                 # Store image with contour drawn -----------------------------------
 
                 # Convert the depth to an 8-bit range
-                depth_vis = (depth_image_np / self.clipping_range * 255).astype(
-                    np.uint8
-                )
-                # Convert single channel depth to 3-channel BGR (for contour drawing)
-                depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                # depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                #     np.uint8
+                # )
+                # # Convert single channel depth to 3-channel BGR (for contour drawing)
+                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
-                # Draw the contour of the rgb to the depth image to viz the offset
-                cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
-                cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
+                # # Draw the contour of the rgb to the depth image to viz the offset
+                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+                # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
 
-                cv2.imwrite(
-                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
-                    depth_vis_bgr,
-                )
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
+                #     depth_vis_bgr,
+                # )
 
-                cv2.imwrite(
-                    f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb{area}.png",
-                    rgb_image_np,
-                )
+                # cv2.imwrite(
+                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb{area}.png",
+                #     rgb_image_np,
+                # )
 
                 # --------------------------------------------------------------------
-        self.last_pos = cube_positions
-        self.last_pos_w = cube_positions_w
 
         self.distance_cam_cube = distance_cam_cube
         return (
@@ -272,4 +288,5 @@ class CubeDetector:
             np.array(cube_positions_w),
             np.array(self.data_age),
             np.array(self.distance_cam_cube),
+            np.array(pos_on_sensor),
         )

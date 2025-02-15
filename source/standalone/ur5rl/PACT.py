@@ -185,12 +185,16 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     real_joint_positions = ur5_controller.get_joint_observation()
     while real_joint_positions == None:
         real_joint_positions = ur5_controller.get_joint_observation()
-    cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense_node)
+    cube_pos, data_age, z, pos_sensor = get_current_cube_pos_from_real_robot(
+        realsense_node
+    )
     cube_pos = torch.from_numpy(cube_pos).to("cuda:0")
     data_age = torch.tensor(data_age).to("cuda:0")
     z = torch.tensor(z).to("cuda:0")
+    pos_sensor = torch.tensor(pos_sensor).to("cuda:0")
 
     cube_pos = cube_pos[0]
+    pos_sensor = pos_sensor[0]
     cube_goal = torch.tensor(cube_goal_pos).to("cuda:0")
     cube_distance_to_goal = torch.norm(
         cube_pos - cube_goal, dim=-1, keepdim=False
@@ -217,7 +221,7 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     real_joint_torques_t = real_joint_torques_t.unsqueeze(0)  # (1, 6)
     real_gripper_state_t = real_gripper_state_t
     cube_pos = cube_pos.unsqueeze(0)  # (1, 3)
-    cube_distance_to_goal = cube_distance_to_goal
+    pos_sensor = pos_sensor.unsqueeze(0)  #! POSSIBLE ERROR
 
     obs = torch.cat(
         (
@@ -229,6 +233,7 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
             cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
             data_age.unsqueeze(dim=1).unsqueeze(dim=1),
             z.unsqueeze(dim=1).unsqueeze(dim=1),
+            pos_sensor.unsqueeze(dim=1),
         ),
         dim=-1,
     )
@@ -258,8 +263,8 @@ def get_current_cube_pos_from_real_robot(realsense_node: realsense_obs_reciever)
     print("[INFO]: Waiting for cube positions from the real robot...")
     while realsense_node.get_cube_position() == None:
         pass
-    real_cube_positions, data_age, z = realsense_node.get_cube_position()
-    return real_cube_positions, data_age, z
+    real_cube_positions, data_age, z, pos_sensor = realsense_node.get_cube_position()
+    return real_cube_positions, data_age, z, pos_sensor
 
 
 def set_learning_config():
@@ -278,7 +283,7 @@ def set_learning_config():
     return agent_cfg, log_dir, resume_path
 
 
-def train_rsl_rl_agent(env, env_cfg, agent_cfg):
+def train_rsl_rl_agent(env, env_cfg, agent_cfg, resume=True):
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
@@ -289,10 +294,11 @@ def train_rsl_rl_agent(env, env_cfg, agent_cfg):
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
 
-    # save resume path before creating a new log_dir
-    resume_path = get_checkpoint_path(
-        log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
-    )
+    if resume:
+        # save resume path before creating a new log_dir
+        resume_path = get_checkpoint_path(
+            log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+        )
 
     # create runner from rsl-rl
     runner = OnPolicyRunner(
@@ -302,9 +308,10 @@ def train_rsl_rl_agent(env, env_cfg, agent_cfg):
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
 
-    print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-    # load previously trained model
-    runner.load(resume_path)
+    if resume:
+        print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+        # load previously trained model
+        runner.load(resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
@@ -360,7 +367,11 @@ def goal_reached(realsense_node, goal_pos, threshold=0.05):
     return distance < threshold
 
 
+# Get init state from real hw or stored state
 use_real_hw = False
+# Resume the last training
+resume = False
+EXPERIMENT_NAME = "nur_approach_rew"
 
 
 def main():
@@ -416,6 +427,8 @@ def main():
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
     )
+    if env.set_arm_init_pose(real_joint_positions):
+        print("Set arm init pose successful!")
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)  # type: ignore
 
@@ -447,9 +460,10 @@ def main():
 
         arm_interrupt_state = obs[0][0:6].cpu().numpy()
         gripper_interrupt_state = obs[0][18].cpu().numpy()
-        env_cfg.arm_joints_init_state = arm_interrupt_state
+        env_cfg.arm_joints_init_state = arm_interrupt_state  #! Das funktioniert nicht
+        # agent_cfg.experiment_name = EXPERIMENT_NAME
 
-        train_rsl_rl_agent(env, env_cfg, agent_cfg)
+        train_rsl_rl_agent(env, env_cfg, agent_cfg, resume)
 
     return
 
