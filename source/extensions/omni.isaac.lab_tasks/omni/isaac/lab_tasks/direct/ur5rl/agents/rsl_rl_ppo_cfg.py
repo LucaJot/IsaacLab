@@ -36,6 +36,6 @@ class Ur5RLPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
-        desired_kl=0.008,
+        desired_kl=0.01,
         max_grad_norm=1.5,
     )

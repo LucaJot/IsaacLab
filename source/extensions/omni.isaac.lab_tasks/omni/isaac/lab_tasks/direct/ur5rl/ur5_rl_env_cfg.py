@@ -95,14 +95,14 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     alive_reward_scaling = +0.01
     terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
-    torque_penalty_scaling = -0.0001
-    torque_limit_exeeded_penalty_scaling = -3
+    torque_penalty_scaling = -0.002
+    torque_limit_exeeded_penalty_scaling = -1
     cube_out_of_sight_penalty_scaling = -0.0001
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
-    approach_reward = 0.02
+    approach_reward = 0.025
 
-    torque_limit = 90000.0  #! DEBUG
+    torque_limit = 9000.0  #! DEBUG
 
     decimation = 2
     action_scale = 0.7

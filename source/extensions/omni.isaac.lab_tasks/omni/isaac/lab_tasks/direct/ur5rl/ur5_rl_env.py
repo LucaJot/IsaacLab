@@ -164,12 +164,15 @@ class HawUr5Env(DirectRLEnv):
         # self.yolov11 = YOLO("yolo11s.pt")
 
         #! LOGGING
-        self.LOG_CUBE_POS = False
+        self.LOG_ENV_DETAILS = False
         self.log_dir = "/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir"
         self.episode_data = {
             "pos_sensor_x": [],
             "pos_sensor_y": [],
             "dist_cube_cam": [],
+            "reward_approach": [],
+            "penalty_torque": [],
+            "mean_torque": [],
         }
 
         self.DEBUG_GRIPPER = True
@@ -435,12 +438,16 @@ class HawUr5Env(DirectRLEnv):
         # )
         #! LOGGING
         # ✅ Save only for the first environment (Env0)
-        if self.LOG_CUBE_POS:
+        if self.LOG_ENV_DETAILS:
             self.episode_data["pos_sensor_x"].append(float(pos_sensor[0][0].cpu()))
             self.episode_data["pos_sensor_y"].append(float(pos_sensor[0][1].cpu()))
             self.episode_data["dist_cube_cam"].append(
                 float(self.dist_cube_cam[0].cpu())
             )
+            mean_torque = torch.mean(
+                torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
+            )
+            self.episode_data["mean_torque"].append(float(mean_torque.cpu()))
 
         if torch.isnan(obs).any():
             warnings.warn("[WARNING] NaN detected in observations!", UserWarning)
@@ -573,7 +580,7 @@ class HawUr5Env(DirectRLEnv):
         # self.cube_object.write_root_velocity_to_sim(cube_rootstate[:, 7:])
 
         #! LOGGING
-        if self.LOG_CUBE_POS:
+        if self.LOG_ENV_DETAILS:
             if 0 in env_ids:
                 episode_id = len(
                     os.listdir(self.log_dir)
@@ -586,6 +593,9 @@ class HawUr5Env(DirectRLEnv):
                     "pos_sensor_x": [],
                     "pos_sensor_y": [],
                     "dist_cube_cam": [],
+                    "reward_approach": [],
+                    "penalty_torque": [],
+                    "mean_torque": [],
                 }
 
     def set_joint_angles_absolute(self, joint_angles: list[float64]) -> bool:
@@ -637,12 +647,16 @@ class HawUr5Env(DirectRLEnv):
         # self.total_penalty_distance_cube_to_goal += rewards[3]
         # self.total_torque_limit_exeeded_penalty += rewards[4]
         # self.total_goal_reached_reward += rewards[5]
-        # self.total_torque_penalty += rewards[6]
+        self.total_torque_penalty += rewards[6]
         self.cube_approach_reward += rewards[7]
+
+        if self.LOG_ENV_DETAILS:
+            self.episode_data["reward_approach"].append(float(rewards[7][0].cpu()))
+            # self.episode_data["penalty_torque"].append(float(rewards[6][0].cpu()))
 
         # total_reward = torch.sum(rewards, dim=0)
 
-        total_reward = torch.sum(torch.stack([rewards[7]]), dim=0)
+        total_reward = torch.sum(torch.stack([rewards[7], rewards[6]]), dim=0)
 
         if torch.isnan(total_reward).any():
             warnings.warn("[WARNING] NaN detected in rewards!", UserWarning)
@@ -666,8 +680,8 @@ def compute_rewards(
     gripper_action_bin: torch.Tensor,
     vel_penalty_scaling: float,
     torque_penalty_scaling: float,
-    torque_limit_exeeded: torch.Tensor,
-    torque_limit_exeeded_penalty_scaling: float,
+    torque_limit_exceeded: torch.Tensor,
+    torque_limit_exceeded_penalty_scaling: float,
     data_age: torch.Tensor,
     cube_out_of_sight_penalty_scaling: float,
     distance_cube_to_goal_pos: torch.Tensor,
@@ -689,12 +703,24 @@ def compute_rewards(
     penalty_distance_cube_to_goal = (
         distance_cube_to_goal_penalty_scaling * distance_cube_to_goal_pos
     )
-    torque_penalty = torque_penalty_scaling * torch.sum(
-        torch.abs(arm_joint_torque), dim=-1
+
+    penalty_free_limits = torch.tensor(
+        [105.0, 105.0, 105.0, 20.0, 20.0, 20.0], device="cuda:0"
     )
+    remaining_torque = torch.tensor([45.0, 45.0, 45.0, 8.0, 8.0, 8.0], device="cuda:0")
+    torques_abs = torch.abs(arm_joint_torque)
+    # calculate how much the torque exceeds the limit
+    torque_limit_exceedamount = torch.relu(torques_abs - penalty_free_limits)
+    # Get the percentage of the torque limit to breaking limit
+    exceeded_percentage = torch.clip(
+        torch.div(torque_limit_exceedamount, remaining_torque), min=0.0, max=1.0
+    )
+    torque_penalty = torque_penalty_scaling * exceeded_percentage
+
+    total_torque_penalty = torch.sum(torque_penalty, dim=-1)
 
     torque_limit_exeeded_penalty = (
-        torque_limit_exeeded_penalty_scaling * torque_limit_exeeded
+        torque_limit_exceeded_penalty_scaling * torque_limit_exceeded
     )
 
     goal_reached_reward = goal_reached_scaling * goal_reached
@@ -711,7 +737,7 @@ def compute_rewards(
     # )
 
     # Option 2 for approach reward: Exponential decay of reward with distance
-    k = 3.5
+    k = 5
     approach_reward = torch.where(
         dist_cube_cam > 0.0,
         approach_reward_scaling * torch.exp(-k * dist_cube_cam),
@@ -726,7 +752,7 @@ def compute_rewards(
             penalty_distance_cube_to_goal,
             torque_limit_exeeded_penalty,
             goal_reached_reward,
-            torque_penalty,
+            total_torque_penalty,
             approach_reward,
         ]
     )
