@@ -250,7 +250,7 @@ def step_real(policy, ur5_controller, realsense_node, cube_goal_pos, action_scal
     obs = get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos)
     action = policy(obs)
     action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
-    action = action * 0.01  # * action_scale
+    action = action * 0.05  # * action_scale
     action = action.squeeze(dim=0)
     print(f"Action: {action}")
     print(f"Observations: {obs}")
@@ -370,11 +370,11 @@ def goal_reached(realsense_node, goal_pos, threshold=0.05):
 
 
 # Get init state from real hw or stored state
-use_real_hw = True
+use_real_hw = False
 # Resume the last training
 resume = True
 EXPERIMENT_NAME = "_"
-NUM_ENVS = 1
+NUM_ENVS = 16
 
 
 def main():
@@ -447,7 +447,7 @@ def main():
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
     interrupt = True  #! Force Retrain for Debug
-    success = True  #! Force Real Robot for Debug
+    # success = True  #! Force Real Robot for Debug
 
     if success:
         print("Task solved in Sim!")

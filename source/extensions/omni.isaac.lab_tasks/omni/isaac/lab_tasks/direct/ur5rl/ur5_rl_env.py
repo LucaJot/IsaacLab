@@ -84,6 +84,11 @@ class HawUr5Env(DirectRLEnv):
             self.scene.num_envs, 1
         )
 
+        self.randomize = True
+        self.joint_randomize_level = 0.5
+        self.cube_randomize_level = 0.2
+        self.container_randomize_level = 0.2
+
         # Statistics for rewards
         self.total_penalty_alive: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device
@@ -177,6 +182,9 @@ class HawUr5Env(DirectRLEnv):
 
         self.DEBUG_GRIPPER = True
 
+    def set_eval_mode(self):
+        self.randomize = False
+
     def set_arm_init_pose(self, joint_angles: list[float64]) -> bool:
 
         if len(joint_angles) != 6:
@@ -212,17 +220,19 @@ class HawUr5Env(DirectRLEnv):
         # Check if the pick and place setup is enabled
         if self.cfg.pp_setup:
             # self.cubes = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg)
+            container_pos = (1.0, 0.0, 0.0)
+            cube_pos = self.cfg.cube_init_state
 
             # add container table
             spawn_from_usd(
                 prim_path="/World/envs/env_.*/container",
                 cfg=self.cfg.container_cfg,
-                translation=(1.0, 0.0, 0.0),  # usual:(0.8, 0.0, 0.0),
+                translation=container_pos,  # usual:(0.8, 0.0, 0.0),
             )
             spawn_cuboid(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cuboid_cfg,
-                translation=self.cfg.cube_init_state,
+                translation=cube_pos,
             )
 
         # clone, filter, and replicate
@@ -510,6 +520,46 @@ class HawUr5Env(DirectRLEnv):
         reset_terminated = self.goal_reached | self.torque_limit_exeeded
         return reset_terminated, time_out
 
+    def _randomize_object_positions(self, env_id):
+        """Randomizes the positions of the container and cube for a given environment."""
+
+        # Randomize container position
+        container_pos = (
+            1.0
+            + np.random.uniform(
+                -self.container_randomize_level, self.container_randomize_level
+            ),
+            0.0
+            + np.random.uniform(
+                -self.container_randomize_level, self.container_randomize_level
+            ),
+            0.0,  # Z stays fixed as it sits on the ground
+        )
+
+        # Randomize cube position
+        cube_pos = (
+            self.cfg.cube_init_state[0]
+            + np.random.uniform(-self.cube_randomize_level, self.cube_randomize_level),
+            self.cfg.cube_init_state[1]
+            + np.random.uniform(-self.cube_randomize_level, self.cube_randomize_level),
+            self.cfg.cube_init_state[2],  # Keep cube at correct height
+        )
+
+        # Apply the new positions in Isaac Sim using USD API
+        container_prim = self.scene.stage.GetPrimAtPath(
+            f"/World/envs/env_{env_id}/container"
+        )
+        if container_prim.IsValid():
+            container_xform = Usd.Prim(container_prim).GetAttribute("xformOp:translate")
+            if container_xform:
+                container_xform.Set(Gf.Vec3d(*container_pos))
+
+        cube_prim = self.scene.stage.GetPrimAtPath(f"/World/envs/env_{env_id}/Cube")
+        if cube_prim.IsValid():
+            cube_xform = Usd.Prim(cube_prim).GetAttribute("xformOp:translate")
+            if cube_xform:
+                cube_xform.Set(Gf.Vec3d(*cube_pos))
+
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
             env_ids = self.robot._ALL_INDICES  # type: ignore
@@ -519,8 +569,11 @@ class HawUr5Env(DirectRLEnv):
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
-        randomness = (torch.rand_like(joint_pos) * 2 - 1) * 0.2
-        joint_pos += randomness
+        if self.randomize:
+            randomness = (
+                torch.rand_like(joint_pos) * 2 - 1
+            ) * self.joint_randomize_level
+            joint_pos += randomness
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
@@ -531,6 +584,10 @@ class HawUr5Env(DirectRLEnv):
         self.cubedetector.reset_data_age(env_ids)  # type: ignore
         self.goal_reached[env_ids] = 0.0
         self.dist_cube_cam_minimal[env_ids] = 99.0
+
+        # if self.randomize:
+        #     for env_id in env_ids:
+        #         self._randomize_object_positions(env_id)
 
         # Reset statistics
         if (
