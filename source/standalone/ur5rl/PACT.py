@@ -221,7 +221,7 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     real_joint_torques_t = real_joint_torques_t.unsqueeze(0)  # (1, 6)
     real_gripper_state_t = real_gripper_state_t
     cube_pos = cube_pos.unsqueeze(0)  # (1, 3)
-    pos_sensor = pos_sensor.unsqueeze(0)  #! POSSIBLE ERROR
+    pos_sensor = pos_sensor.unsqueeze(0)
 
     obs = torch.cat(
         (
@@ -244,16 +244,18 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
     return obs
 
 
-def step_real(policy, ur5_controller, realsense_node, cube_goal_pos):
+def step_real(policy, ur5_controller, realsense_node, cube_goal_pos, action_scale=1.0):
     """Play with RSL-RL agent in real world."""
     # Get the current joint positions from the real robot
     obs = get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos)
     action = policy(obs)
-    action = torch.tanh(action)
+    action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
+    action = action * 0.01  # * action_scale
+    action = action.squeeze(dim=0)
     print(f"Action: {action}")
     print(f"Observations: {obs}")
     # Execute the action on the real robot
-    #!ur5_controller.set_joint_delta(action.cpu().numpy())
+    ur5_controller.set_joint_delta(action.detach().cpu().numpy())
     return obs
 
 
@@ -361,17 +363,18 @@ def load_most_recent_model(
 
 def goal_reached(realsense_node, goal_pos, threshold=0.05):
     """Check if the goal is reached."""
-    cube_pos, _, _ = get_current_cube_pos_from_real_robot(realsense_node)
+    cube_pos, _, _, _ = get_current_cube_pos_from_real_robot(realsense_node)
     cube_pos = cube_pos[0]
     distance = np.linalg.norm(cube_pos - goal_pos)
     return distance < threshold
 
 
 # Get init state from real hw or stored state
-use_real_hw = False
+use_real_hw = True
 # Resume the last training
 resume = True
 EXPERIMENT_NAME = "_"
+NUM_ENVS = 1
 
 
 def main():
@@ -392,7 +395,10 @@ def main():
 
         # Get the current joint positions from the real robot ----------------
         real_joint_positions = get_current_joint_pos_from_real_robot(ur5_control)
-        cube_pos, data_age, z = get_current_cube_pos_from_real_robot(realsense)
+        cube_pos, data_age, z, pos_sensor = get_current_cube_pos_from_real_robot(
+            realsense
+        )
+        # real_cube_positions, data_age, z, pos_sensor
         # Unpack (real has no parallel envs)
         cube_pos = cube_pos[0]
         cube_pos[2] += 0.2
@@ -416,7 +422,7 @@ def main():
     # Run the task with real state in simulation -------------------------
     env_cfg = parse_env_cfg(
         task_name="Isaac-Ur5-RL-Direct-v0",
-        num_envs=16,
+        num_envs=NUM_ENVS,
     )
     env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_init_state = real_joint_positions  # type: ignore
@@ -441,6 +447,7 @@ def main():
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
     interrupt = True  #! Force Retrain for Debug
+    success = True  #! Force Real Robot for Debug
 
     if success:
         print("Task solved in Sim!")
@@ -449,7 +456,13 @@ def main():
         # real_env = RealUR5Env(ur5_control, realsense, cube_goal_pos)
 
         while not goal_reached(realsense, cube_goal_pos):
-            obs = step_real(policy, ur5_control, realsense, cube_goal_pos)
+            obs = step_real(
+                policy,
+                ur5_control,
+                realsense,
+                cube_goal_pos,
+                action_scale=env_cfg.action_scale,
+            )
             print(f"Observations: {obs}")
             # TODO Interrupts catchen
 

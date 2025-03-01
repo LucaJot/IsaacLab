@@ -164,7 +164,7 @@ class HawUr5Env(DirectRLEnv):
         # self.yolov11 = YOLO("yolo11s.pt")
 
         #! LOGGING
-        self.LOG_ENV_DETAILS = False
+        self.LOG_ENV_DETAILS = True
         self.log_dir = "/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir"
         self.episode_data = {
             "pos_sensor_x": [],

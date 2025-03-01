@@ -178,7 +178,7 @@ class Ur5JointController(Node):
                 for live, GT in zip(self.live_joint_positions, self.joint_positions_GT)
             ]
             # If the difference is larger than a threshold, reset the robot
-            if sum(diff) > 0.01:
+            if sum(diff) > 0.005:
                 self.get_logger().warn("Robot has drifted. Resetting the ground truth")
                 self.joint_positions_GT = self.live_joint_positions.copy()
 
