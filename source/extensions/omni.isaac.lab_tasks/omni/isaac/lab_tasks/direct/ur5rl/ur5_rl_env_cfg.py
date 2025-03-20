@@ -55,9 +55,9 @@ class EventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("ur5", body_names=".*"),
-            "static_friction_range": (0.7, 1.3),
-            "dynamic_friction_range": (0.8, 1.0),
-            "restitution_range": (1.0, 1.0),
+            "static_friction_range": (0.4, 0.9),
+            "dynamic_friction_range": (0.2, 0.6),
+            "restitution_range": (0.0, 0.7),
             "num_buckets": 250,
         },
     )
@@ -86,23 +86,23 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 3.5
+    episode_length_s = 6
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
-    cube_init_state: tuple[float, float, float] = (1.0, 0.0, 1.0)
+    cube_init_state: tuple[float, float, float] = (1.0, 0.0, 0.57)
 
     alive_reward_scaling = +0.01
     terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
     torque_penalty_scaling = -0.002
-    torque_limit_exeeded_penalty_scaling = -1
+    torque_limit_exeeded_penalty_scaling = -0.2
     cube_out_of_sight_penalty_scaling = -0.0001
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
-    approach_reward = 0.025
+    approach_reward = 0.035
 
-    torque_limit = 9000.0  #! DEBUG
+    torque_limit = 500.0
 
     decimation = 2
     action_scale = 0.7
@@ -167,7 +167,9 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     cuboid_cfg = sim_utils.CuboidCfg(
         size=(0.05, 0.05, 0.05),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(rigid_body_enabled=True),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_body_enabled=True, kinematic_enabled=True
+        ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
         visual_material=sim_utils.PreviewSurfaceCfg(
@@ -184,7 +186,30 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Cube",
         spawn=cuboid_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(1.0, 0.0, 1.0),
+            pos=(0.50, 0.0, 1.0),
+        ),
+        debug_vis=True,
+    )
+
+    cube_rigid_obj_cfg_v2 = RigidObjectCfg(
+        prim_path="/World/envs/env_0/Cube",  # Single “source” environment
+        spawn=CuboidCfg(
+            size=(0.05, 0.05, 0.05),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                rigid_body_enabled=True,
+                disable_gravity=False,  # Let it fall if needed
+                kinematic_enabled=False,  # Must be False if you want dynamic
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="average",
+                restitution_combine_mode="average",
+                static_friction=1.0,
+            ),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(1.0, 0.0, 1.0),  # Put it somewhere
         ),
         debug_vis=True,
     )
