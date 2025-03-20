@@ -35,16 +35,13 @@ class CubeDetector:
         """
         Deprojects pixel coordinates and depth to a 3D point relative to the same camera.
 
-        :param intrin: A dictionary representing the camera intrinsics.
-                    Example:
-                    {
-                        'fx': float,        # Focal length in x
-                        'fy': float,        # Focal length in y
-                        'cx': float,       # Principal point x
-                        'cy': float,       # Principal point y
-                    }
+        :param intrin: representing the camera intrinsics
+            'fx': float,        # Focal length in x
+            'fy': float,        # Focal length in y
+            'cx': float,       # Principal point x
+            'cy': float,       # Principal point y
         :param pixel: Tuple or list of 2 floats representing the pixel coordinates (x, y).
-        :param depth: Float representing the depth at the given pixel.
+        :param z: Float representing the depth at the given pixel.
         :return: List of 3 floats representing the 3D point in space.
         """
 
