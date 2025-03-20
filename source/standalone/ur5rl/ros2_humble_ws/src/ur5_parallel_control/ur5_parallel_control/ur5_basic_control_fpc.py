@@ -122,7 +122,7 @@ class Ur5JointController(Node):
             self.get_logger().warn("No joint positions received yet")
             return None  # type: ignore
         gripper_state = np.float64(-1.0 if self.current_gripper_state == 0.0 else 1.0)
-        all_joint_positions = self.live_joint_positions + [(gripper_state)]
+        all_joint_positions = self.live_joint_positions + [gripper_state]
         return all_joint_positions
 
     def get_joint_observation(self) -> dict | None:
@@ -195,7 +195,7 @@ class Ur5JointController(Node):
             duration = self.d_t
         # If no joint positions received yet abort
         if self.joint_positions_GT is None:
-            self.get_logger().warn("Waiting for the urs joint positions")
+            self.get_logger().warn("Waiting for the ur5 joint positions")
             return
         # Set the gripper to the target state
         if self.current_gripper_state != self.gripper_target:
