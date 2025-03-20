@@ -228,12 +228,18 @@ def get_obs_from_real_world(ur5_controller, realsense_node, cube_goal_pos):
             real_joint_positions_t.unsqueeze(dim=1),
             real_joint_velocities_t.unsqueeze(dim=1),
             real_joint_torques_t.unsqueeze(dim=1),
-            real_gripper_state_t.unsqueeze(dim=1).unsqueeze(dim=1),
-            cube_pos.unsqueeze(dim=1),
-            cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
-            data_age.unsqueeze(dim=1).unsqueeze(dim=1),
-            z.unsqueeze(dim=1).unsqueeze(dim=1),
-            pos_sensor.unsqueeze(dim=1),
+            real_gripper_state_t.unsqueeze(dim=1).unsqueeze(
+                dim=1
+            ),  # Gripper open or clsed
+            cube_pos.unsqueeze(dim=1),  # Where is the cube on the world frame
+            cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
+                dim=1
+            ),  # How far is the cube from the goalpossition
+            data_age.unsqueeze(dim=1).unsqueeze(
+                dim=1
+            ),  # Age off the cubes last seen position
+            z.unsqueeze(dim=1).unsqueeze(dim=1),  # Depth value of the cubes centroid
+            pos_sensor.unsqueeze(dim=1),  # Cube position on the sensor plane
         ),
         dim=-1,
     )
@@ -370,9 +376,9 @@ def goal_reached(realsense_node, goal_pos, threshold=0.05):
 
 
 # Get init state from real hw or stored state
-use_real_hw = False
+use_real_hw = True
 # Resume the last training
-resume = True
+resume = False
 EXPERIMENT_NAME = "_"
 NUM_ENVS = 16
 
@@ -411,8 +417,8 @@ def main():
         real_joint_positions = [
             -0.15472919145692998,
             -1.8963201681720179,
-            2.0,
-            -2.160175625477926,
+            1.5,
+            -2.460175625477926,
             -1.5792139212237757,
             -0.0030048529254358414,
             -1.0,
@@ -424,8 +430,8 @@ def main():
         task_name="Isaac-Ur5-RL-Direct-v0",
         num_envs=NUM_ENVS,
     )
-    env_cfg.cube_init_state = cube_pos  # type: ignore
-    env_cfg.arm_init_state = real_joint_positions  # type: ignore
+    # env_cfg.cube_init_state = cube_pos  # type: ignore
+    env_cfg.arm_joints_init_state = real_joint_positions[:-1]  # type: ignore
 
     # Create simulated environment with the real-world state
     env = gymnasium.make(
@@ -433,6 +439,7 @@ def main():
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
     )
+
     if env.set_arm_init_pose(real_joint_positions):
         print("Set arm init pose successful!")
     # wrap around environment for rsl-rl
