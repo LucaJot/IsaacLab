@@ -99,7 +99,7 @@ def ros_node_thread(node: Ur5JointController):
 # ---------------------------------------
 
 # ----------- Data Analysis -------------
-from influx_datalogger import InfluxDataLogger
+from source.standalone.ur5rl.backup_files.influx_datalogger import InfluxDataLogger
 
 
 def store_joint_positions(
