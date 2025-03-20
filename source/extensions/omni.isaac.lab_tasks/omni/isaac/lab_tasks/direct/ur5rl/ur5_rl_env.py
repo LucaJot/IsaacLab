@@ -29,7 +29,8 @@ from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sensors import CameraCfg, Camera
 
 # from omni.isaac.dynamic_control import _dynamic_control
-from pxr import Usd, Gf
+from pxr import Usd, Gf, UsdPhysics
+
 
 # dc = _dynamic_control.acquire_dynamic_control_interface()
 
@@ -85,7 +86,7 @@ class HawUr5Env(DirectRLEnv):
         )
 
         self.randomize = True
-        self.joint_randomize_level = 0.5
+        self.joint_randomize_level = 0.4
         self.cube_randomize_level = 0.2
         self.container_randomize_level = 0.2
 
@@ -149,6 +150,9 @@ class HawUr5Env(DirectRLEnv):
             self.scene.num_envs, device=self.device, dtype=torch.float32
         )
 
+        self.init_root_pos = None
+        self.init_root_quat = None
+
         # Cube detection
         self.cubedetector = CubeDetector(num_envs=self.scene.num_envs)
         # Convert the cube goal position to a tensor
@@ -169,7 +173,7 @@ class HawUr5Env(DirectRLEnv):
         # self.yolov11 = YOLO("yolo11s.pt")
 
         #! LOGGING
-        self.LOG_ENV_DETAILS = True
+        self.LOG_ENV_DETAILS = False
         self.log_dir = "/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir"
         self.episode_data = {
             "pos_sensor_x": [],
@@ -224,16 +228,18 @@ class HawUr5Env(DirectRLEnv):
             cube_pos = self.cfg.cube_init_state
 
             # add container table
-            spawn_from_usd(
+            self.container = spawn_from_usd(
                 prim_path="/World/envs/env_.*/container",
                 cfg=self.cfg.container_cfg,
                 translation=container_pos,  # usual:(0.8, 0.0, 0.0),
             )
-            spawn_cuboid(
+            self.cube = spawn_cuboid(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cuboid_cfg,
                 translation=cube_pos,
             )
+
+            # self.cube = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg_v2)
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False)
@@ -500,7 +506,7 @@ class HawUr5Env(DirectRLEnv):
 
         # Provide a grace period for high torques when resetting
         pardon = torch.where(
-            self.episode_length_buf < 5, torch.tensor(1), torch.tensor(0)
+            self.episode_length_buf < 10, torch.tensor(1), torch.tensor(0)
         )
 
         self.torque_limit_exeeded = torch.logical_and(
@@ -545,24 +551,15 @@ class HawUr5Env(DirectRLEnv):
             self.cfg.cube_init_state[2],  # Keep cube at correct height
         )
 
-        # Apply the new positions in Isaac Sim using USD API
-        container_prim = self.scene.stage.GetPrimAtPath(
-            f"/World/envs/env_{env_id}/container"
-        )
-        if container_prim.IsValid():
-            container_xform = Usd.Prim(container_prim).GetAttribute("xformOp:translate")
-            if container_xform:
-                container_xform.Set(Gf.Vec3d(*container_pos))
-
-        cube_prim = self.scene.stage.GetPrimAtPath(f"/World/envs/env_{env_id}/Cube")
-        if cube_prim.IsValid():
-            cube_xform = Usd.Prim(cube_prim).GetAttribute("xformOp:translate")
-            if cube_xform:
-                cube_xform.Set(Gf.Vec3d(*cube_pos))
-
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
             env_ids = self.robot._ALL_INDICES  # type: ignore
+
+        # Assuming only during init all episode lengths are 0
+        if torch.sum(self.episode_length_buf) == 0:
+            # Save the initial root position and quaternion
+            self.init_root_pos = self.robot.data.root_pos_w.clone()
+            self.init_root_quat = self.robot.data.root_quat_w.clone()
 
         # General resetting tasks (timers etc.)
         super()._reset_idx(env_ids)  # type: ignore
@@ -574,6 +571,24 @@ class HawUr5Env(DirectRLEnv):
                 torch.rand_like(joint_pos) * 2 - 1
             ) * self.joint_randomize_level
             joint_pos += randomness
+
+            if (self.init_root_pos is not None) and (self.init_root_quat is not None):
+                root_pos = self.init_root_pos[
+                    env_ids
+                ].clone()  # shape [len(env_ids), 3]
+                root_quat = self.init_root_quat[
+                    env_ids
+                ].clone()  # shape [len(env_ids), 4]
+
+                # Example: random XY offset up to ±0.2
+                rand_x = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+                rand_y = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+                # We'll keep Z the same
+                root_pos[:, 0] += rand_x
+                root_pos[:, 1] += rand_y
+
+                root_pose = torch.cat((root_pos, root_quat), dim=1)
+                self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
@@ -702,7 +717,7 @@ class HawUr5Env(DirectRLEnv):
         # self.total_penalty_vel += rewards[1]
         # self.total_penalty_cube_out_of_sight += rewards[2]
         # self.total_penalty_distance_cube_to_goal += rewards[3]
-        # self.total_torque_limit_exeeded_penalty += rewards[4]
+        self.total_torque_limit_exeeded_penalty += rewards[4]
         # self.total_goal_reached_reward += rewards[5]
         self.total_torque_penalty += rewards[6]
         self.cube_approach_reward += rewards[7]
@@ -713,7 +728,9 @@ class HawUr5Env(DirectRLEnv):
 
         # total_reward = torch.sum(rewards, dim=0)
 
-        total_reward = torch.sum(torch.stack([rewards[7], rewards[6]]), dim=0)
+        total_reward = torch.sum(
+            torch.stack([rewards[7], rewards[6], rewards[4]]), dim=0
+        )
 
         if torch.isnan(total_reward).any():
             warnings.warn("[WARNING] NaN detected in rewards!", UserWarning)
