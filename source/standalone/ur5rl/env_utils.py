@@ -14,6 +14,7 @@ from omni.isaac.lab_tasks.utils import get_checkpoint_path, parse_env_cfg
 import os
 from datetime import datetime
 import gymnasium as gym
+import torch
 
 
 def set_learning_config():
@@ -66,7 +67,12 @@ def load_most_recent_model(
     return policy
 
 
-def train_rsl_rl_agent(env, env_cfg, agent_cfg, resume=True):
+def train_rsl_rl_agent(
+    env,
+    env_cfg,
+    agent_cfg,
+    resume=True,
+):
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
@@ -108,11 +114,57 @@ def train_rsl_rl_agent(env, env_cfg, agent_cfg, resume=True):
     )
 
 
+def train_rsl_rl_agent_init(env, env_cfg, agent_cfg, CL: int, resume=True):
+    # specify directory for logging experiments
+    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    log_root_path = os.path.abspath(log_root_path)
+    print(f"[INFO] Logging experiment in directory: {log_root_path}")
+    # specify directory for logging runs: {time-stamp}_{run_name}
+    log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_CL_iteration{CL}"
+    if agent_cfg.run_name:
+        log_dir += f"_{agent_cfg.run_name}"
+    log_dir = os.path.join(log_root_path, log_dir)
+
+    if resume:
+        # save resume path before creating a new log_dir
+        resume_path = get_checkpoint_path(
+            log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+        )
+
+    # create runner from rsl-rl
+    runner = OnPolicyRunner(
+        env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device
+    )
+    # write git state to logs
+    runner.add_git_repo_to_log(__file__)
+    # load the checkpoint
+
+    if resume:
+        print(f"[INFO]: Loading model checkpoint from: {resume_path}")
+        # load previously trained model
+        runner.load(resume_path)
+
+    # dump the configuration into log-directory
+    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+
+    print(f"Starting CL iteration {CL}")
+    env.unwrapped.set_CL_state(CL)  # type: ignore
+    # run training
+    runner.learn(
+        num_learning_iterations=agent_cfg.max_iterations,
+        init_at_random_ep_len=True,
+    )
+
+
 def run_task_in_sim(
     env: RslRlVecEnvWrapper,
     log_dir: str,
     resume_path: str,
     agent_cfg: RslRlOnPolicyRunnerCfg,
+    simulation_app,
 ):
     """Play with RSL-RL agent."""
 
