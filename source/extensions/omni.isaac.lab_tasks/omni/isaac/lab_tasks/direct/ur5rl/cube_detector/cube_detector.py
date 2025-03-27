@@ -17,7 +17,7 @@ class CubeDetector:
         """
         self.real = real
         self.area_thresh = 70 if real else 150  # ! TEST  70 Reasonable value for real
-        self.clipping_range = 2000.0 if real else 2.0
+        self.clipping_range = 2000.0 if real else 5.0
         self.data_age = np.zeros(num_envs)
         # Init with NaN to indicate that no cube has been detected yet
         self.last_pos = np.full((num_envs, 3), -1.0)
@@ -46,11 +46,21 @@ class CubeDetector:
         """
 
         # Calculate normalized coordinates
-        x = (pixel[0] - cx) / fx
-        y = (pixel[1] - cy) / fy
+        x = (pixel[0] - cx) * z / fx
+        y = (pixel[1] - cy) * z / fy
+
+        #! TEST
+        u, v = pixel
+
+        X = (u - cx) * z / fx
+        Y = (v - cy) * z / fy
+        Z = z
+
+        # Flip axes to  match the isaac camera frame (z forward, y left, x down)
+        point = [Z, -X, -Y]
 
         # Compute 3D point
-        point = [z, -z * x, -z * y]
+
         return point
 
     def transform_frame_cam2world(self, camera_pos_w, camera_q_w, point_cam_rf):
@@ -92,7 +102,7 @@ class CubeDetector:
         rgb_camera_quats: np.ndarray,
         camera_intrinsics_matrices_k: np.ndarray,
         base_link_poses: np.ndarray,
-        CAMERA_RGB_2_D_OFFSET: int = -35,
+        CAMERA_RGB_2_D_OFFSET: int = 0,
     ):
         """
         Extract positions of red cubes in the camera frame for all environments.
@@ -123,7 +133,7 @@ class CubeDetector:
         pos_on_sensor = []
 
         # Make the camera pose relative to the robot base link
-        rel_rgb_poses = rgb_poses - robo_rootpose  #! was -
+        rel_rgb_poses = rgb_poses
 
         # Iterate over the images of all environments
         for env_idx in range(rgb_images.shape[0]):
@@ -166,7 +176,7 @@ class CubeDetector:
                 # Get largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
                 # Shift the contour to the left  to compensate for the offset between the rgb and depth image
-                largest_contour[:, 0, 0] += CAMERA_RGB_2_D_OFFSET  # type: ignore
+                # largest_contour[:, 0, 0] += CAMERA_RGB_2_D_OFFSET  # type: ignore
                 # Clip x to [0, width-1] so that the contour does not go out of bounds
                 largest_contour[:, 0, 0] = np.clip(
                     largest_contour[:, 0, 0], 0, depth_image_np.shape[1] - 1
@@ -256,26 +266,32 @@ class CubeDetector:
 
                 # Store image with contour drawn -----------------------------------
 
-                # Convert the depth to an 8-bit range
-                # depth_vis = (depth_image_np / self.clipping_range * 255).astype(
-                #     np.uint8
-                # )
-                # # Convert single channel depth to 3-channel BGR (for contour drawing)
-                # depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
+                if z > 1.5:
+                    # Convert the depth to an 8-bit range
+                    depth_vis = (depth_image_np / self.clipping_range * 255).astype(
+                        np.uint8
+                    )
+                    # Convert single channel depth to 3-channel BGR (for contour drawing)
+                    depth_vis_bgr = cv2.cvtColor(depth_vis, cv2.COLOR_GRAY2BGR)
 
-                # # Draw the contour of the rgb to the depth image to viz the offset
-                # cv2.drawContours(depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
-                # cv2.drawContours(rgb_image_np, [largest_contour], -1, (0, 255, 0), 3)
+                    # Draw the contour of the rgb to the depth image to viz the offset
+                    cv2.drawContours(
+                        depth_vis_bgr, [largest_contour], -1, (0, 255, 0), 3
+                    )
+                    cv2.drawContours(
+                        rgb_image_np, [largest_contour], -1, (0, 255, 0), 3
+                    )
 
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_depth.png",
-                #     depth_vis_bgr,
-                # )
+                    cv2.imwrite(
+                        f"/home/luca/Pictures/isaacsimcameraframes/large_z_depth.png",
+                        depth_vis_bgr,
+                    )
 
-                # cv2.imwrite(
-                #     f"/home/luca/Pictures/isaacsimcameraframes/real_maskframe_rgb{area}.png",
-                #     rgb_image_np,
-                # )
+                    cv2.imwrite(
+                        f"/home/luca/Pictures/isaacsimcameraframes/large_z_rgb{area}.png",
+                        rgb_image_np,
+                    )
+                    print(f"Large z: {z}")
 
                 # --------------------------------------------------------------------
 

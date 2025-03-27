@@ -86,7 +86,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 6
+    episode_length_s = 1500  # was 15
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
@@ -95,17 +95,17 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     alive_reward_scaling = +0.01
     terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
-    torque_penalty_scaling = -0.002
+    torque_penalty_scaling = -0.004
     torque_limit_exeeded_penalty_scaling = -0.2
     cube_out_of_sight_penalty_scaling = -0.0001
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
     approach_reward = 0.035
-
-    torque_limit = 500.0
+    pickup_reward_scaling = 0.2
+    torque_limit = 999999  # was 500.0
 
     decimation = 2
-    action_scale = 0.7
+    action_scale = 0.5
     v_cm = 35  # cm/s
     stepsize = v_cm * (1 / f_update) / 44  # Max angle delta per update
     pp_setup = True
@@ -159,7 +159,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
             clipping_range=(0.1, 10),
         ),
         offset=CameraCfg.OffsetCfg(
-            pos=(0.055, 0.0, 0.025), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
+            pos=(0.055, -0.03, 0.025), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
         ),
     )
 

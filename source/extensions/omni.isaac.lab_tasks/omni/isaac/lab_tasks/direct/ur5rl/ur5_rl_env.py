@@ -69,6 +69,11 @@ class HawUr5Env(DirectRLEnv):
     ):
         super().__init__(cfg, render_mode, **kwargs)
 
+        self.CL_state = -1
+
+        self.cube_z_old: torch.Tensor = None
+        self.cube_z_new: torch.Tensor = None
+
         self._arm_dof_idx, _ = self.robot.find_joints(self.cfg.arm_dof_name)
         self._gripper_dof_idx, _ = self.robot.find_joints(self.cfg.gripper_dof_name)
         self.haw_ur5_dof_idx, _ = self.robot.find_joints(self.cfg.haw_ur5_dof_name)
@@ -106,7 +111,7 @@ class HawUr5Env(DirectRLEnv):
         self.total_torque_limit_exeeded_penalty: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device
         )
-        self.total_goal_reached_reward: torch.Tensor = torch.zeros(
+        self.pickup_reward: torch.Tensor = torch.zeros(
             self.scene.num_envs, device=self.device
         )
         self.total_torque_penalty: torch.Tensor = torch.zeros(
@@ -122,7 +127,7 @@ class HawUr5Env(DirectRLEnv):
             self.total_penalty_cube_out_of_sight,
             self.total_penalty_distance_cube_to_goal,
             self.total_torque_limit_exeeded_penalty,
-            self.total_goal_reached_reward,
+            self.pickup_reward,
             self.total_torque_penalty,
             self.cube_approach_reward,
         ]
@@ -188,6 +193,86 @@ class HawUr5Env(DirectRLEnv):
 
     def set_eval_mode(self):
         self.randomize = False
+
+        self.cfg.events.robot_joint_stiffness_and_damping.params = {
+            "asset_cfg": SceneEntityCfg(
+                name="ur5",
+                joint_names=".*",
+                joint_ids=slice(None, None, None),
+                fixed_tendon_names=None,
+                fixed_tendon_ids=slice(None, None, None),
+                body_names=None,
+                body_ids=slice(None, None, None),
+                object_collection_names=None,
+                object_collection_ids=slice(None, None, None),
+                preserve_order=False,
+            ),
+            "stiffness_distribution_params": (1.0, 1.0),
+            "damping_distribution_params": (1.0, 1.0),
+            "operation": "scale",
+            "distribution": "log_uniform",
+        }
+        self.cfg.events.robot_physics_material.params = {
+            "asset_cfg": SceneEntityCfg(
+                name="ur5",
+                joint_names=None,
+                joint_ids=slice(None, None, None),
+                fixed_tendon_names=None,
+                fixed_tendon_ids=slice(None, None, None),
+                body_names=".*",
+                body_ids=slice(None, None, None),
+                object_collection_names=None,
+                object_collection_ids=slice(None, None, None),
+                preserve_order=False,
+            ),
+            "static_friction_range": (0.7, 0.7),
+            "dynamic_friction_range": (0.5, 0.5),
+            "restitution_range": (0.3, 0.3),
+            "num_buckets": 250,
+        }
+
+    def set_train_mode(self):
+        self.randomize = True
+
+        self.cfg.events.robot_joint_stiffness_and_damping.params = {
+            "asset_cfg": SceneEntityCfg(
+                name="ur5",
+                joint_names=".*",
+                joint_ids=slice(None, None, None),
+                fixed_tendon_names=None,
+                fixed_tendon_ids=slice(None, None, None),
+                body_names=None,
+                body_ids=slice(None, None, None),
+                object_collection_names=None,
+                object_collection_ids=slice(None, None, None),
+                preserve_order=False,
+            ),
+            "stiffness_distribution_params": (0.9, 1.1),
+            "damping_distribution_params": (0.8, 1.2),
+            "operation": "scale",
+            "distribution": "log_uniform",
+        }
+        self.cfg.events.robot_physics_material.params = {
+            "asset_cfg": SceneEntityCfg(
+                name="ur5",
+                joint_names=None,
+                joint_ids=slice(None, None, None),
+                fixed_tendon_names=None,
+                fixed_tendon_ids=slice(None, None, None),
+                body_names=".*",
+                body_ids=slice(None, None, None),
+                object_collection_names=None,
+                object_collection_ids=slice(None, None, None),
+                preserve_order=False,
+            ),
+            "static_friction_range": (0.4, 0.9),
+            "dynamic_friction_range": (0.2, 0.6),
+            "restitution_range": (0.0, 0.7),
+            "num_buckets": 250,
+        }
+
+    def set_CL_state(self, state: int):
+        self.CL_state = state
 
     def set_arm_init_pose(self, joint_angles: list[float64]) -> bool:
 
@@ -341,7 +426,7 @@ class HawUr5Env(DirectRLEnv):
         ]
         # Check if the sim joints deviate too much from the script ground truth joints
         if not torch.allclose(
-            current_main_joint_positions, current_main_joint_positions_sim, atol=1e-2
+            current_main_joint_positions, current_main_joint_positions_sim, atol=0.5e-2
         ):
             # if self.cfg.verbose_logging:
             #     print(
@@ -398,8 +483,11 @@ class HawUr5Env(DirectRLEnv):
         rgb = self.camera_rgb.data.output["rgb"]
         depth = self.camera_depth.data.output["distance_to_camera"]
 
-        # Extract the cubes position from the rgb and depth images an convert it to a tensor
+        self.cube_z_old = (
+            self.cube_z_new.clone() if self.cube_z_old is not None else None  # type: ignore
+        )
 
+        # Extract the cubes position from the rgb and depth images an convert it to a tensor
         cube_pos, cube_pos_w, data_age, dist_cube_cam, pos_sensor = (
             self.cubedetector.get_cube_positions(
                 rgb_images=rgb.cpu().numpy(),
@@ -419,6 +507,16 @@ class HawUr5Env(DirectRLEnv):
         self.dist_cube_cam = torch.tensor(dist_cube_cam, device=self.device)
         pos_sensor = torch.from_numpy(pos_sensor).to(self.device)
 
+        self.cube_z_new = cube_pos[:, 2]
+
+        # If on startup, set cube z pos old to new
+        if self.cube_z_old is None:
+            self.cube_z_old = self.cube_z_new.clone()
+        # If env has been reset, set cube z pos old to new
+        self.cube_z_old = torch.where(
+            self.episode_length_buf == 0, cube_pos[:, 2], self.cube_z_old
+        )
+
         # If env has been reset, set dist_prev to -1
         self.dist_cube_cam_minimal = torch.where(
             self.episode_length_buf == 0, 99.0, self.dist_cube_cam_minimal
@@ -437,7 +535,7 @@ class HawUr5Env(DirectRLEnv):
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.gripper_action_bin.unsqueeze(dim=1).unsqueeze(dim=1),
-                cube_pos.unsqueeze(dim=1),
+                cube_pos_w.unsqueeze(dim=1),
                 self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.dist_cube_cam.unsqueeze(dim=1).unsqueeze(dim=1),
@@ -566,29 +664,30 @@ class HawUr5Env(DirectRLEnv):
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
-        if self.randomize:
-            randomness = (
-                torch.rand_like(joint_pos) * 2 - 1
-            ) * self.joint_randomize_level
-            joint_pos += randomness
+        #! TODO ENABLE RANDOMIZATION
+        # if self.randomize:
+        #     randomness = (
+        #         torch.rand_like(joint_pos) * 2 - 1
+        #     ) * self.joint_randomize_level
+        #     joint_pos += randomness
 
-            if (self.init_root_pos is not None) and (self.init_root_quat is not None):
-                root_pos = self.init_root_pos[
-                    env_ids
-                ].clone()  # shape [len(env_ids), 3]
-                root_quat = self.init_root_quat[
-                    env_ids
-                ].clone()  # shape [len(env_ids), 4]
+        #     if (self.init_root_pos is not None) and (self.init_root_quat is not None):
+        #         root_pos = self.init_root_pos[
+        #             env_ids
+        #         ].clone()  # shape [len(env_ids), 3]
+        #         root_quat = self.init_root_quat[
+        #             env_ids
+        #         ].clone()  # shape [len(env_ids), 4]
 
-                # Example: random XY offset up to ±0.2
-                rand_x = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
-                rand_y = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
-                # We'll keep Z the same
-                root_pos[:, 0] += rand_x
-                root_pos[:, 1] += rand_y
+        #         # Example: random XY offset up to ±0.2
+        #         rand_x = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+        #         rand_y = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+        #         # We'll keep Z the same
+        #         root_pos[:, 0] += rand_x
+        #         root_pos[:, 1] += rand_y
 
-                root_pose = torch.cat((root_pos, root_quat), dim=1)
-                self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+        #         root_pose = torch.cat((root_pos, root_quat), dim=1)
+        #         self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
@@ -614,22 +713,18 @@ class HawUr5Env(DirectRLEnv):
                 print("-" * 20)
                 print(f"Resetting environment {env_id}")
                 print(f"Statistics")
-                print(f"Total penalty alive: {self.total_penalty_alive[env_id]}")
-                print(f"Total penalty vel: {self.total_penalty_vel[env_id]}")
                 print(
-                    f"Total penalty cube out of sight: {self.total_penalty_cube_out_of_sight[env_id]}"
+                    f"Using {self.CL_state} as CL state, adding R[0 - {self.CL_state}]"
                 )
+                print(f"[0]: Total pickup reward: {self.pickup_reward[env_id]}")
                 print(
-                    f"Total penalty distance cube to goal: {self.total_penalty_distance_cube_to_goal[env_id]}"
+                    f"[1]: Cube out of sight penalty: {self.total_penalty_cube_out_of_sight[env_id]}"
                 )
+                print(f"[2]: Cube approach reward: {self.cube_approach_reward[env_id]}")
+                print(f"[3]: Total torque penalty: {self.total_torque_penalty[env_id]}")
                 print(
-                    f"Total torque limit exeeded penalty: {self.total_torque_limit_exeeded_penalty[env_id]}"
+                    f"[4]: Total torque limit exeeded penalty: {self.total_torque_limit_exeeded_penalty[env_id]}"
                 )
-                print(
-                    f"Total goal reached reward: {self.total_goal_reached_reward[env_id]}"
-                )
-                print(f"Total torque penalty: {self.total_torque_penalty[env_id]}")
-                print(f"Cube approach reward: {self.cube_approach_reward[env_id]}")
                 print("-" * 20)
 
                 self.total_penalty_alive[env_ids] = 0  # type: ignore
@@ -637,7 +732,7 @@ class HawUr5Env(DirectRLEnv):
                 self.total_penalty_cube_out_of_sight[env_ids] = 0  # type: ignore
                 self.total_penalty_distance_cube_to_goal[env_ids] = 0  # type: ignore
                 self.total_torque_limit_exeeded_penalty[env_ids] = 0  # type: ignore
-                self.total_goal_reached_reward[env_ids] = 0  # type: ignore
+                self.pickup_reward[env_ids] = 0  # type: ignore
                 self.total_torque_penalty[env_ids] = 0  # type: ignore
                 self.cube_approach_reward[env_ids] = 0  # type: ignore
 
@@ -691,6 +786,8 @@ class HawUr5Env(DirectRLEnv):
             return False
 
     def _get_rewards(self) -> torch.Tensor:
+        # print(f"Delta Cube Z: {delta_cube_z}")
+
         rewards = compute_rewards(
             self.cfg.alive_reward_scaling,
             self.reset_terminated,
@@ -711,16 +808,18 @@ class HawUr5Env(DirectRLEnv):
             self.dist_cube_cam,
             self.dist_cube_cam_minimal,
             self.cfg.approach_reward,
+            self.cube_z_new,
+            self.cfg.pickup_reward_scaling,
         )
 
         # self.total_penalty_alive += rewards[0]
         # self.total_penalty_vel += rewards[1]
-        # self.total_penalty_cube_out_of_sight += rewards[2]
+        self.total_penalty_cube_out_of_sight += rewards[2]
         # self.total_penalty_distance_cube_to_goal += rewards[3]
         self.total_torque_limit_exeeded_penalty += rewards[4]
-        # self.total_goal_reached_reward += rewards[5]
-        self.total_torque_penalty += rewards[6]
-        self.cube_approach_reward += rewards[7]
+        self.total_torque_penalty += rewards[5]
+        self.cube_approach_reward += rewards[6]
+        self.pickup_reward += rewards[7]
 
         if self.LOG_ENV_DETAILS:
             self.episode_data["reward_approach"].append(float(rewards[7][0].cpu()))
@@ -728,9 +827,27 @@ class HawUr5Env(DirectRLEnv):
 
         # total_reward = torch.sum(rewards, dim=0)
 
-        total_reward = torch.sum(
-            torch.stack([rewards[7], rewards[6], rewards[4]]), dim=0
-        )
+        all_rewards = [
+            rewards[7],  # pickup reward
+            rewards[2],  #! cube out of sight penalty
+            rewards[6],  # approach reward
+            rewards[5],  # torque penalty
+            rewards[4],  # torque limit exceeded penalty
+            rewards[3],  #! distance cube to goal penalty
+            rewards[1],  #! velocity penalty
+            rewards[0],  #! alive penalty
+        ]
+        # if (rewards[7] > 0).any():
+        # print(f"[DEBUG] Positive pickup reward(s): {rewards[7]}")
+
+        if self.CL_state > -1:
+            total_reward = torch.sum(
+                torch.stack(all_rewards[: (self.CL_state + 1)]), dim=0
+            )
+        else:
+            total_reward = torch.sum(
+                torch.stack([rewards[7], rewards[6], rewards[4]]), dim=0
+            )
 
         if torch.isnan(total_reward).any():
             warnings.warn("[WARNING] NaN detected in rewards!", UserWarning)
@@ -765,6 +882,8 @@ def compute_rewards(
     dist_cube_cam: torch.Tensor,
     dist_cube_cam_minimal: torch.Tensor,
     approach_reward_scaling: float,
+    cube_z: torch.Tensor,
+    pickup_reward_scaling: float,
 ) -> torch.Tensor:
 
     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
@@ -799,6 +918,14 @@ def compute_rewards(
 
     goal_reached_reward = goal_reached_scaling * goal_reached
 
+    pickup_reward = torch.where(
+        cube_z > 0.6,
+        torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
+        torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
+    )
+
+    pickup_reward = pickup_reward * pickup_reward_scaling
+
     # Option 1 for approach reward: Minimal distance to cube is stored and improvment rewarded
     # improvement = dist_cube_cam_minimal - dist_cube_cam
     # improvement_reward = torch.clamp(improvement, min=0.0) * approach_reward_scaling
@@ -825,8 +952,8 @@ def compute_rewards(
             penalty_cube_out_of_sight,
             penalty_distance_cube_to_goal,
             torque_limit_exeeded_penalty,
-            goal_reached_reward,
             total_torque_penalty,
             approach_reward,
+            pickup_reward,
         ]
     )
