@@ -46,6 +46,7 @@ from env_utils import *
 
 #! TESTING ONLY - REMOVE
 import csv
+import json
 import os
 import torch
 import numpy as np
@@ -114,6 +115,75 @@ def move_to_detection_test_positions_alt(
                 step_counter += 1
 
 
+def move_to_detection_test_positions_real(
+    rg_node: ros_to_gym,
+    env,
+    output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
+    steps_per_target=1500,
+    stop_epsilon=0.02,  # Stop if joint error is below this [rad]
+):
+    import csv
+    import torch
+
+    target_positions = [
+        [-0.0, -2.66, 2.43, -2.54, -1.71, -0.0],
+        [-0.0, -1.26, 0.77, -2.3, -1.71, -0.0],
+        [-0.0, -0.99, 0.77, -2.0, -1.71, -0.0],
+    ]
+
+    gripper_action = torch.tensor([-1.0])  # ✅ Fixed gripper value
+
+    with open(output_file, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(
+            [
+                "step",
+                "target_idx",
+                *[f"joint_{i}" for i in range(6)],
+                "cube_x",
+                "cube_y",
+                "cube_z",
+            ]
+        )
+
+        # Reset environment
+        obs = rg_node.get_obs_from_real_world()
+        actions = torch.zeros(7).unsqueeze(0)
+        obs_sim, _, _, _ = env.step(actions)
+
+        step_counter = 0
+        for idx, target in enumerate(target_positions):
+            target_tensor = torch.tensor(target)
+
+            for _ in range(steps_per_target):
+                joint_angles = obs[0][0][0:6]
+                cube_pos = obs[0][0][19:22]
+
+                # Compute delta and stop if close enough
+                delta = target_tensor - joint_angles.cpu()
+                if torch.all(delta.abs() < stop_epsilon):
+                    print(f"[INFO] Reached target {idx} after {step_counter} steps.")
+                    break
+
+                scaled_delta = torch.clamp(delta * 5.0, -1.0, 1.0)  # Soft gain
+                action = torch.cat((scaled_delta, gripper_action)).unsqueeze(0)
+
+                rg_node.step_real_with_action(action)
+                obs = rg_node.get_obs_from_real_world()
+                obs_sim, _, _, _ = env.step(action)
+
+                # Log data
+                writer.writerow(
+                    [
+                        step_counter,
+                        idx,
+                        *obs[0][0:6].cpu().numpy(),
+                        *obs[0][19:22].cpu().numpy(),
+                    ]
+                )
+                step_counter += 1
+
+
 def move_to_detection_test_positions(
     env,
     output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
@@ -127,8 +197,6 @@ def move_to_detection_test_positions(
         [-0.0, -2.66, 2.43, -2.54, -1.71, -0.0],
         [-0.0, -1.26, 0.77, -2.3, -1.71, -0.0],
         [-0.0, -0.99, 0.77, -2.0, -1.71, -0.0],
-        # [-0.0, -1.26, 0.77, -2.3, -1.71, -0.0],
-        # [-0.0, -2.66, 2.43, -2.54, -1.71, -0.0],
     ]
 
     gripper_action = torch.tensor([-1.0])  # ✅ Fixed gripper value
@@ -148,7 +216,7 @@ def move_to_detection_test_positions(
 
         # Reset environment
         actions = torch.zeros(7).unsqueeze(0)
-        obs, _, _, info = env.step(actions)
+        obs, _, _, _ = env.step(actions)
 
         step_counter = 0
         for idx, target in enumerate(target_positions):
@@ -167,7 +235,7 @@ def move_to_detection_test_positions(
                 scaled_delta = torch.clamp(delta * 5.0, -1.0, 1.0)  # Soft gain
                 action = torch.cat((scaled_delta, gripper_action)).unsqueeze(0)
 
-                obs, _, _, info = env.step(action)
+                obs, _, _, _ = env.step(action)
 
                 # Log data
                 writer.writerow(
@@ -181,6 +249,57 @@ def move_to_detection_test_positions(
                 step_counter += 1
 
 
+def do_nothing(env, steps=500):
+    actions = torch.zeros(7).unsqueeze(0)
+    for _ in range(steps):
+        obs, _, _, info = env.step(actions)
+
+
+def extract_learning_metrics(log_results):
+    import torch
+    import statistics
+    from collections import deque
+
+    metrics = {}
+
+    # Extract core metrics
+    for key in [
+        "mean_value_loss",
+        "mean_surrogate_loss",
+        "collection_time",
+        "learn_time",
+        "it",
+        "tot_iter",
+    ]:
+        value = log_results.get(key)
+        if isinstance(value, torch.Tensor):
+            value = value.item()
+        metrics[key] = value
+
+    # --- Snapshot-based reward metrics (from unfinished episodes) ---
+    reward_sum = log_results.get("cur_reward_sum")
+    ep_lengths = log_results.get("cur_episode_length")
+    if isinstance(reward_sum, torch.Tensor) and isinstance(ep_lengths, torch.Tensor):
+        mask = ep_lengths > 0
+        if mask.any():
+            rewards = reward_sum[mask]
+            lengths = ep_lengths[mask]
+            metrics["mean_reward_per_episode_snapshot"] = (
+                (rewards / lengths).mean().item()
+            )
+            metrics["mean_reward_per_step"] = (rewards.sum() / lengths.sum()).item()
+
+    # --- RSL-style mean reward over recent completed episodes ---
+    rewbuffer = log_results.get("rewbuffer")
+    if isinstance(rewbuffer, (list, deque)) and len(rewbuffer) > 0:
+        try:
+            metrics["mean_reward_per_episode_rsl"] = statistics.mean(rewbuffer)
+        except Exception as e:
+            metrics["mean_reward_per_episode_rsl"] = f"Error: {e}"
+
+    return metrics
+
+
 #! TESTING ONLY - REMOVE
 
 
@@ -192,9 +311,9 @@ def main():
     # Pretrain the model
     pretrain = True
     # Resume the last training
-    resume = True
+    resume = False
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 1
+    NUM_ENVS = 16
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -254,26 +373,68 @@ def main():
         cube_goal_pos=cube_goal_pos,
     )
 
+    # Set the initial pose of the arm in the simulator
     if env.unwrapped.set_arm_init_pose(real_joint_angles):  # type: ignore
         print("Set arm init pose successful!")
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)  # type: ignore
 
-    #! TESTING ONLY - REMOVE
-    env.unwrapped.set_eval_mode()  # type: ignore
-    move_to_detection_test_positions(env)
-    return
-    #! TESTING ONLY - REMOVE
-
     if pretrain:
-        start_iter = 2
-        env.unwrapped.set_train_mode()  # type: ignore
-        for i in range(start_iter, 3):
-            log_results = train_rsl_rl_agent_init(
-                env, env_cfg, agent_cfg, CL=i + 1, resume=resume
-            )
-            print(log_results)
-            resume = True
+        import os
+        import json
+
+        # Define reward thresholds for each curriculum level (CL)
+        curriculum_thresholds = {
+            0: 0.0,  # min mean_reward_per_episode_rsl to move to CL2
+            1: 3.0,  # min reward to go to CL3
+            2: 0.0,  # etc.
+        }
+
+        max_iters_per_cl = 800  # avoid infinite loops
+        start_cl = 0
+        max_cl = max(curriculum_thresholds.keys())
+
+        env.unwrapped.set_train_mode()  # enable training mode
+        current_cl = start_cl
+
+        while current_cl <= max_cl:
+            for local_iter in range(max_iters_per_cl):
+                print(
+                    f"\n🎯 Training at Curriculum Level CL{current_cl} (Iteration {local_iter})"
+                )
+
+                # Run a training iteration at current CL
+                log_results = train_rsl_rl_agent_init(
+                    env, env_cfg, agent_cfg, CL=current_cl, resume=resume
+                )
+
+                # Extract metrics and save to JSON
+                log_results_ser = extract_learning_metrics(log_results)
+                log_path = f"/home/luca/isaaclab_ws/IsaacLab/source/standalone/ur5rl/pretrain_CL{current_cl}_iter{local_iter}.json"
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+                with open(log_path, "w") as f:
+                    json.dump(log_results_ser, f, indent=4)
+
+                print(json.dumps(log_results_ser, indent=2))
+
+                # Check if performance exceeds threshold
+                mean_rew = log_results_ser.get("mean_reward_per_episode_rsl", 0.0)
+                if mean_rew >= curriculum_thresholds[current_cl]:
+                    print(
+                        f"✅ Reward {mean_rew:.4f} passed threshold {curriculum_thresholds[current_cl]} — moving to CL{current_cl + 1}"
+                    )
+                    current_cl += 1
+                    break  # move to next CL level
+
+                resume = True  # resume from latest checkpoint
+
+            else:
+                # Executed only if loop *did not break* — i.e., max iters reached
+                print(
+                    f"⚠️ Max iterations reached for CL{current_cl}, moving to next CL level."
+                )
+                current_cl += 1
 
     env.unwrapped.set_eval_mode()  # type: ignore
     # Run the task in the simulator

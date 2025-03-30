@@ -153,10 +153,11 @@ def train_rsl_rl_agent_init(env, env_cfg, agent_cfg, CL: int, resume=True):
     print(f"Starting CL iteration {CL}")
     env.unwrapped.set_CL_state(CL)  # type: ignore
     # run training
-    runner.learn(
+    log_results = runner.learn(
         num_learning_iterations=agent_cfg.max_iterations,
         init_at_random_ep_len=True,
     )
+    return log_results
 
 
 def run_task_in_sim(

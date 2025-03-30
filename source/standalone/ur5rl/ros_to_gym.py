@@ -38,6 +38,12 @@ class ros_to_gym:
 
         return executor, thread
 
+    def close(self):
+        """Close the ROS 2 nodes."""
+        self.ur5_control.destroy_node()
+        self.realsense.destroy_node()
+        rclpy.shutdown
+
     def get_current_joint_pos_from_real_robot(self):
         """Sync the simulated robot joints with the real robot."""
         # Sync sim joints with real robot
@@ -50,8 +56,8 @@ class ros_to_gym:
     def get_current_cube_pos_from_real_robot(self):
         """Sync the simulated cube position with the real cube position."""
         # Sync sim cube with real cube
-        print("[INFO]: Waiting for cube positions from the real robot...")
         while self.realsense.get_cube_position() == None:
+            print("[INFO]: Waiting for cube positions from the real robot...")
             pass
         real_cube_positions, data_age, z, pos_sensor = (
             self.realsense.get_cube_position()
@@ -154,13 +160,22 @@ class ros_to_gym:
         obs = self.get_obs_from_real_world()
         action = policy(obs)
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
-        action = action * 0.05  # * action_scale
+        action = action * 0.2  # * action_scale
         action = action.squeeze(dim=0)
         print(f"Action: {action}")
         print(f"Observations: {obs}")
         # Execute the action on the real robot
         self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
         return obs
+
+    def step_real_with_action(self, action):
+        """Apply action command to the real world."""
+        action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
+        action = action * 0.08  # * action_scale
+        action = action.squeeze(dim=0)
+        # print(f"Action: {action}")
+        # Execute the action on the real robot
+        self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
 
     def goal_reached(self, threshold=0.05):
         """Check if the goal is reached."""
