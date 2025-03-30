@@ -25,6 +25,8 @@ class CubeDetector:
 
         self.distance_cam_cube = 2.0
 
+        self.call_counter = 0
+
     def return_last_pos(self, idx: int):
         # increase the age of the data by 1 if no cube detected
         self.data_age[idx] += 1
@@ -151,12 +153,23 @@ class CubeDetector:
             # rgb_pose[2] -= 0.35
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_BGR2HSV)
-            lower_red1 = np.array([0, 50, 40])
-            upper_red1 = np.array([10, 255, 255])
+            #! DARKEN THE IMAGE FOR ANALYSIS
+            # hsv[:, :, 2] = hsv[:, :, 2] * 0.5
+            if not self.real:
+                lower_red1 = np.array([0, 50, 40])
+                upper_red1 = np.array([10, 255, 255])
+                lower_red2 = np.array([170, 50, 50])
+                upper_red2 = np.array([180, 255, 255])
+
+            # More narrow range for real images
+            else:
+                lower_red1 = np.array([0, 60, 50])
+                upper_red1 = np.array([8, 255, 255])
+                lower_red2 = np.array([175, 90, 70])
+                upper_red2 = np.array([180, 255, 255])
+
             red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
 
-            lower_red2 = np.array([170, 50, 50])
-            upper_red2 = np.array([180, 255, 255])
             red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
 
             red_mask = cv2.bitwise_or(red_mask1, red_mask2)
@@ -243,6 +256,9 @@ class CubeDetector:
                     camera_q_w=rgb_pose_q,
                     point_cam_rf=cube_pos_camera_rf,
                 )
+                if self.real:
+                    # Real camera does not account for the base link offset
+                    cube_pos_w[2] += 0.26
                 cube_positions_w.append(cube_pos_w)
                 distance_cam_cube.append(z)
 
@@ -266,7 +282,8 @@ class CubeDetector:
 
                 # Store image with contour drawn -----------------------------------
 
-                if z > 1.5:
+                # if self.call_counter % 1000 == 0:
+                if False:
                     # Convert the depth to an 8-bit range
                     depth_vis = (depth_image_np / self.clipping_range * 255).astype(
                         np.uint8
@@ -283,17 +300,32 @@ class CubeDetector:
                     )
 
                     cv2.imwrite(
-                        f"/home/luca/Pictures/isaacsimcameraframes/large_z_depth.png",
+                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_depth_{self.call_counter}.png",
                         depth_vis_bgr,
                     )
 
                     cv2.imwrite(
-                        f"/home/luca/Pictures/isaacsimcameraframes/large_z_rgb{area}.png",
+                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_rgb_{self.call_counter}.png",
                         rgb_image_np,
                     )
-                    print(f"Large z: {z}")
+
+                    # Convert modified HSV to BGR for visualization
+                    hsv_vis_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+                    # Draw the same contour on the HSV-BGR image
+                    cv2.drawContours(hsv_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
+
+                    # Save the HSV image with the contour
+                    cv2.imwrite(
+                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_hsvmod_{self.call_counter}.png",
+                        hsv_vis_bgr,
+                    )
+
+                    # print(f"Large z: {z}")
+                    print(f"Image saved at req. no: {self.call_counter}")
 
                 # --------------------------------------------------------------------
+                self.call_counter += 1
 
         self.distance_cam_cube = distance_cam_cube
         return (

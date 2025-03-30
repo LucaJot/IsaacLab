@@ -86,7 +86,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 1500  # was 15
+    episode_length_s = 15  # was 15
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
