@@ -183,6 +183,8 @@ class HawUr5Env(DirectRLEnv):
         )
         self.mean_dist_cam_cube = 0
 
+        self.grasp_success = torch.zeros(self.scene.num_envs, device=self.device)
+
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
 
@@ -456,10 +458,10 @@ class HawUr5Env(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         # Normalize the actions -1 and 1
-        actions = torch.tanh(actions)
+        actions_capped = torch.tanh(actions)
         # Separate the main joint actions (first 6) and the gripper action (last one)
-        main_joint_deltas = actions[:, :6]
-        gripper_action = actions[:, 6]  # Shape: (num_envs)
+        main_joint_deltas = actions_capped[:, :6]
+        gripper_action = actions_capped[:, 6]  # Shape: (num_envs)
 
         # Check if the sim joints deviate too much from the script ground truth joints
         self._check_drift()
@@ -493,38 +495,63 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
+    def check_grasp_success(self) -> torch.Tensor:
+        """
+        Checks if the robot gripper in each environment successfully grasps the cube.
+
+        Returns:
+            torch.Tensor: A boolean tensor of shape (num_envs,) indicating grasp success per environment.
+        """
+        success_flags = []
+
+        for i in range(self.scene.num_envs):
+            # Resolve contact sensor paths for this env
+            path_L = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor"
+            path_R = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor"
+            path_C = f"/World/envs/env_{i}/Cube/Cube/Contact_Sensor"
+
+            # Read sensor states
+            Sensor_L = self._contact_sensor_interface.get_sensor_reading(
+                path_L, use_latest_data=True
+            )
+            Sensor_R = self._contact_sensor_interface.get_sensor_reading(
+                path_R, use_latest_data=True
+            )
+            Sensor_Cube = self._contact_sensor_interface.get_sensor_reading(path_C)
+
+            # Read raw contact data (includes contact info like IDs)
+            raw_data_L = self._contact_sensor_interface.get_contact_sensor_raw_data(
+                path_L
+            )
+            raw_data_R = self._contact_sensor_interface.get_contact_sensor_raw_data(
+                path_R
+            )
+            raw_data_C = self._contact_sensor_interface.get_contact_sensor_raw_data(
+                path_C
+            )
+
+            # Logic: All must be in contact AND contact must be with each other
+            if (
+                Sensor_L.in_contact
+                and Sensor_R.in_contact
+                and Sensor_Cube.in_contact
+                and raw_data_L
+                and raw_data_R
+                and raw_data_C
+                and raw_data_L[0][3] == raw_data_C[0][2]
+                and raw_data_R[0][3] == raw_data_C[0][2]
+            ):
+                success_flags.append(True)
+            else:
+                success_flags.append(False)
+
+        # Convert to torch tensor
+        return torch.tensor(success_flags, device=self.device)
+
     def _get_observations(self) -> dict:
 
-        Sensor_L = self._contact_sensor_interface.get_sensor_reading(
-            "/World/envs/env_0/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor",
-            use_latest_data=True,
-        )
-        Sensor_R = self._contact_sensor_interface.get_sensor_reading(
-            "/World/envs/env_0/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor",
-            use_latest_data=True,
-        )
-        raw_data_L = self._contact_sensor_interface.get_contact_sensor_raw_data(
-            "/World/envs/env_0/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor",
-        )
-        raw_data_R = self._contact_sensor_interface.get_contact_sensor_raw_data(
-            "/World/envs/env_0/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor",
-        )
-        Sensor_Cube = self._contact_sensor_interface.get_sensor_reading(
-            "/World/envs/env_0/Cube/Cube/Contact_Sensor"
-        )
-        raw_data_Cube = self._contact_sensor_interface.get_contact_sensor_raw_data(
-            "/World/envs/env_0/Cube/Cube/Contact_Sensor"
-        )
-
-        if (
-            Sensor_L.in_contact
-            and Sensor_Cube.in_contact
-            and raw_data_L[0][3] == raw_data_Cube[0][2]
-        ):
-            print(
-                f"Cube contact detected between {raw_data_L[0][2]} and {raw_data_L[0][3]} (Cube = {raw_data_Cube[0][2]})"
-            )
-            print("yees")
+        self.grasp_success = self.check_grasp_success()
+        # print(f"Grasp success: {self.grasp_success}")
 
         self.dist_cube_cam_minimal = torch.where(
             self.dist_cube_cam > 0,

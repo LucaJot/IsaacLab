@@ -310,7 +310,7 @@ def main():
     # Resume the last training
     resume = True
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 1
+    NUM_ENVS = 4
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -360,12 +360,12 @@ def main():
     cube_pos = [1.15, 0.0, 1.0]
     real_joint_angles = [
         -0.08,
-        -0.1800000000,
+        -0.1600000000,
         0.0,
         -2.460175625477926,
         -1.5792139212237757,
         -0.0,
-        0.0,
+        -2.0,
     ]
 
     # env_cfg.cube_init_state = cube_pos  # type: ignore
