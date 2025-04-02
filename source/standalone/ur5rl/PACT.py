@@ -300,9 +300,6 @@ def extract_learning_metrics(log_results):
     return metrics
 
 
-#! TESTING ONLY - REMOVE
-
-
 def main():
     """Main function."""
 
@@ -311,9 +308,9 @@ def main():
     # Pretrain the model
     pretrain = True
     # Resume the last training
-    resume = False
+    resume = True
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 16
+    NUM_ENVS = 1
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -349,10 +346,6 @@ def main():
             -0.0030048529254358414,
             -1.0,
         ]
-
-        #! Teesting
-        real_joint_angles = [-0.0, -2.66, 2.43, -2.54, -1.71, -0.0, -1.0]
-
         cube_pos = [1.0, 0.0, 0.58]
 
         # Start up the digital twin
@@ -362,6 +355,19 @@ def main():
         task_name="Isaac-Ur5-RL-Direct-v0",
         num_envs=NUM_ENVS,
     )
+
+    #! DEBUGGING
+    cube_pos = [1.15, 0.0, 1.0]
+    real_joint_angles = [
+        -0.08,
+        -0.1800000000,
+        0.0,
+        -2.460175625477926,
+        -1.5792139212237757,
+        -0.0,
+        0.0,
+    ]
+
     # env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
@@ -371,6 +377,7 @@ def main():
         id="Isaac-Ur5-RL-Direct-v0",
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
+        randomize=False,  #! False for testing
     )
 
     # Set the initial pose of the arm in the simulator
@@ -379,58 +386,87 @@ def main():
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)  # type: ignore
 
+    env.unwrapped.set_eval_mode()  # type: ignore
+
+    do_nothing(env, steps=100000)
+    return
+
     if pretrain:
         import os
         import json
 
         # Define reward thresholds for each curriculum level (CL)
         curriculum_thresholds = {
-            0: 0.0,  # min mean_reward_per_episode_rsl to move to CL2
-            1: 3.0,  # min reward to go to CL3
-            2: 0.0,  # etc.
+            0: 0.0,  # unussed
+            1: -0.05,  # min mean_reward_per_episode_rsl to move to CL1
+            2: 3.0,  # min reward to go to CL2
+            3: 0.0,  # etc.
         }
 
-        max_iters_per_cl = 800  # avoid infinite loops
-        start_cl = 0
+        # Plateau detection parameters
+        plateau_window = (
+            3  # how many recent rewards to track (100 episodes each return)
+        )
+        plateau_tolerance = 0.01  # min improvement needed to continue
+
+        max_iters_per_cl = 10  # Each iter runs for 100 episodes = 1000 steps per cl
+        start_cl = 1
         max_cl = max(curriculum_thresholds.keys())
 
-        env.unwrapped.set_train_mode()  # enable training mode
+        env.unwrapped.set_train_mode()
         current_cl = start_cl
 
         while current_cl <= max_cl:
+            recent_rewards = []  # reset reward history per CL
+
             for local_iter in range(max_iters_per_cl):
                 print(
                     f"\n🎯 Training at Curriculum Level CL{current_cl} (Iteration {local_iter})"
                 )
 
-                # Run a training iteration at current CL
+                # Run training iteration
                 log_results = train_rsl_rl_agent_init(
                     env, env_cfg, agent_cfg, CL=current_cl, resume=resume
                 )
 
-                # Extract metrics and save to JSON
+                # Extract metrics and save
                 log_results_ser = extract_learning_metrics(log_results)
                 log_path = f"/home/luca/isaaclab_ws/IsaacLab/source/standalone/ur5rl/pretrain_CL{current_cl}_iter{local_iter}.json"
                 os.makedirs(os.path.dirname(log_path), exist_ok=True)
-
                 with open(log_path, "w") as f:
                     json.dump(log_results_ser, f, indent=4)
 
                 print(json.dumps(log_results_ser, indent=2))
 
-                # Check if performance exceeds threshold
+                # Check reward
                 mean_rew = log_results_ser.get("mean_reward_per_episode_rsl", 0.0)
+
+                # Update recent rewards for plateau detection
+                recent_rewards.append(mean_rew)
+                if len(recent_rewards) > plateau_window:
+                    recent_rewards.pop(0)
+
+                # Condition 1: Threshold passed
                 if mean_rew >= curriculum_thresholds[current_cl]:
                     print(
                         f"✅ Reward {mean_rew:.4f} passed threshold {curriculum_thresholds[current_cl]} — moving to CL{current_cl + 1}"
                     )
                     current_cl += 1
-                    break  # move to next CL level
+                    break
 
-                resume = True  # resume from latest checkpoint
+                # Condition 2: Plateau detected
+                if len(recent_rewards) == plateau_window:
+                    improvement = recent_rewards[-1] - recent_rewards[0]
+                    if improvement < plateau_tolerance:
+                        print(
+                            f"📉 Plateau detected (Δreward={improvement:.4f} < {plateau_tolerance}) — moving to CL{current_cl + 1}"
+                        )
+                        current_cl += 1
+                        break
+
+                resume = True
 
             else:
-                # Executed only if loop *did not break* — i.e., max iters reached
                 print(
                     f"⚠️ Max iterations reached for CL{current_cl}, moving to next CL level."
                 )

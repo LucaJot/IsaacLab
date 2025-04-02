@@ -18,6 +18,8 @@ from omni.isaac.lab.sim.spawners.from_files import (
     spawn_from_usd,
     UsdFileCfg,
 )
+from omni.usd import get_context
+from omni.isaac.lab.sim.spawners import RigidObjectSpawnerCfg
 from omni.isaac.lab.sim.spawners.shapes import spawn_cuboid, CuboidCfg
 from omni.isaac.lab.assets import (
     RigidObject,
@@ -26,10 +28,13 @@ from omni.isaac.lab.assets import (
     RigidObjectCollectionCfg,
 )
 from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.sensors import CameraCfg, Camera
+from omni.isaac.lab.sensors import CameraCfg, Camera, ContactSensor
+from omni.isaac.sensor import _sensor
 
 # from omni.isaac.dynamic_control import _dynamic_control
 from pxr import Usd, Gf, UsdPhysics
+from pxr import UsdPhysics, PhysxSchema
+from omni.physx.scripts import utils as physx_utils
 
 
 # dc = _dynamic_control.acquire_dynamic_control_interface()
@@ -50,6 +55,9 @@ from omni.isaac.lab.utils.noise.noise_cfg import (
 )
 
 from ur5_rl_env_cfg import HawUr5EnvCfg
+from pxr import PhysxSchema
+from omni.physx.scripts import utils
+
 
 # init pos close to the cube
 # [-0.1, -1.00, 1.5, -3.30, -1.57, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -65,6 +73,7 @@ class HawUr5Env(DirectRLEnv):
         cfg: HawUr5EnvCfg,
         render_mode: str | None = None,
         cube_goal_pos: list = [1.0, -0.1, 0.8],
+        randomize: bool = True,
         **kwargs,
     ):
         super().__init__(cfg, render_mode, **kwargs)
@@ -90,7 +99,7 @@ class HawUr5Env(DirectRLEnv):
             self.scene.num_envs, 1
         )
 
-        self.randomize = True
+        self.randomize = randomize
         self.joint_randomize_level = 0.4
         self.cube_randomize_level = 0.2
         self.container_randomize_level = 0.2
@@ -318,13 +327,18 @@ class HawUr5Env(DirectRLEnv):
                 cfg=self.cfg.container_cfg,
                 translation=container_pos,  # usual:(0.8, 0.0, 0.0),
             )
-            self.cube = spawn_cuboid(
+            # self.cube = spawn_cuboid(
+            #     prim_path="/World/envs/env_.*/Cube",
+            #     cfg=self.cfg.cuboid_cfg,
+            #     translation=cube_pos,
+            # )
+
+            # self.cube = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg)
+            self.cube = spawn_from_usd(
                 prim_path="/World/envs/env_.*/Cube",
-                cfg=self.cfg.cuboid_cfg,
+                cfg=self.cfg.cube_usd_cfg,
                 translation=cube_pos,
             )
-
-            # self.cube = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg_v2)
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False)
@@ -333,12 +347,16 @@ class HawUr5Env(DirectRLEnv):
         # add articultion to scene
         self.scene.articulations["ur5"] = self.robot
 
-        # self.scene.rigid_objects["cube"] = self.cubes
+        # self.scene.rigid_objects["cube"] = self.cube
         # return the scene information
         self.camera_rgb = Camera(cfg=self.cfg.camera_rgb_cfg)
         self.scene.sensors["camera_rgb"] = self.camera_rgb
         self.camera_depth = Camera(cfg=self.cfg.camera_depth_cfg)
         self.scene.sensors["camera_depth"] = self.camera_depth
+
+        self._contact_sensor_interface = _sensor.acquire_contact_sensor_interface()
+
+        # self.cs = ContactSensor(cfg=self.cfg.contact_sensor)
 
         # add lights
         light_cfg = sim_utils.DomeLightCfg(
@@ -477,6 +495,37 @@ class HawUr5Env(DirectRLEnv):
 
     def _get_observations(self) -> dict:
 
+        Sensor_L = self._contact_sensor_interface.get_sensor_reading(
+            "/World/envs/env_0/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor",
+            use_latest_data=True,
+        )
+        Sensor_R = self._contact_sensor_interface.get_sensor_reading(
+            "/World/envs/env_0/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor",
+            use_latest_data=True,
+        )
+        raw_data_L = self._contact_sensor_interface.get_contact_sensor_raw_data(
+            "/World/envs/env_0/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor",
+        )
+        raw_data_R = self._contact_sensor_interface.get_contact_sensor_raw_data(
+            "/World/envs/env_0/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor",
+        )
+        Sensor_Cube = self._contact_sensor_interface.get_sensor_reading(
+            "/World/envs/env_0/Cube/Cube/Contact_Sensor"
+        )
+        raw_data_Cube = self._contact_sensor_interface.get_contact_sensor_raw_data(
+            "/World/envs/env_0/Cube/Cube/Contact_Sensor"
+        )
+
+        if (
+            Sensor_L.in_contact
+            and Sensor_Cube.in_contact
+            and raw_data_L[0][3] == raw_data_Cube[0][2]
+        ):
+            print(
+                f"Cube contact detected between {raw_data_L[0][2]} and {raw_data_L[0][3]} (Cube = {raw_data_Cube[0][2]})"
+            )
+            print("yees")
+
         self.dist_cube_cam_minimal = torch.where(
             self.dist_cube_cam > 0,
             torch.minimum(self.dist_cube_cam, self.dist_cube_cam_minimal),
@@ -598,20 +647,24 @@ class HawUr5Env(DirectRLEnv):
         # Get torque
         # print(f"Live Torque: {self.live_joint_torque[:, : len(self._arm_dof_idx)]}")
         # Check if any torque in each environment exceeds the threshold
-        torque_limit_exceeded = torch.any(
-            torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
-            > self.torque_limit,
-            dim=1,
-        )
+        if self.CL_state < 0 or self.CL_state >= 1:
+            torque_limit_exceeded = torch.any(
+                torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
+                > self.torque_limit,
+                dim=1,
+            )
 
-        # Provide a grace period for high torques when resetting
-        pardon = torch.where(
-            self.episode_length_buf < 10, torch.tensor(1), torch.tensor(0)
-        )
+            # Provide a grace period for high torques when resetting
+            pardon = torch.where(
+                self.episode_length_buf < 10, torch.tensor(1), torch.tensor(0)
+            )
 
-        self.torque_limit_exeeded = torch.logical_and(
-            torque_limit_exceeded == 1, pardon == 0
-        )
+            self.torque_limit_exeeded = torch.logical_and(
+                torque_limit_exceeded == 1, pardon == 0
+            )
+        # Dont reset before torque penalty is applied
+        else:
+            self.torque_limit_exeeded = torch.zeros(self.num_envs, device=self.device)
 
         # position reached
         self.goal_reached = torch.where(
@@ -667,29 +720,29 @@ class HawUr5Env(DirectRLEnv):
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         # Domain randomization (TODO make sure states are safe)
         #! TODO ENABLE RANDOMIZATION
-        # if self.randomize:
-        #     randomness = (
-        #         torch.rand_like(joint_pos) * 2 - 1
-        #     ) * self.joint_randomize_level
-        #     joint_pos += randomness
+        if self.randomize:
+            randomness = (
+                torch.rand_like(joint_pos) * 2 - 1
+            ) * self.joint_randomize_level
+            joint_pos += randomness
 
-        #     if (self.init_root_pos is not None) and (self.init_root_quat is not None):
-        #         root_pos = self.init_root_pos[
-        #             env_ids
-        #         ].clone()  # shape [len(env_ids), 3]
-        #         root_quat = self.init_root_quat[
-        #             env_ids
-        #         ].clone()  # shape [len(env_ids), 4]
+            if (self.init_root_pos is not None) and (self.init_root_quat is not None):
+                root_pos = self.init_root_pos[
+                    env_ids
+                ].clone()  # shape [len(env_ids), 3]
+                root_quat = self.init_root_quat[
+                    env_ids
+                ].clone()  # shape [len(env_ids), 4]
 
-        #         # Example: random XY offset up to ±0.2
-        #         rand_x = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
-        #         rand_y = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
-        #         # We'll keep Z the same
-        #         root_pos[:, 0] += rand_x
-        #         root_pos[:, 1] += rand_y
+                # Example: random XY offset up to ±0.2
+                rand_x = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+                rand_y = torch.rand(len(env_ids), device=self.device) * 0.2 - 0.1
+                # We'll keep Z the same
+                root_pos[:, 0] += rand_x
+                root_pos[:, 1] += rand_y
 
-        #         root_pose = torch.cat((root_pos, root_quat), dim=1)
-        #         self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+                root_pose = torch.cat((root_pos, root_quat), dim=1)
+                self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from omni.isaac.lab.sim.spawners.spawner_cfg import RigidObjectSpawnerCfg
 import torch
 from collections.abc import Sequence
 
@@ -23,7 +24,7 @@ from omni.isaac.lab.assets import (
     RigidObjectCollectionCfg,
 )
 from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.sensors import CameraCfg, Camera
+from omni.isaac.lab.sensors import CameraCfg, Camera, ContactSensorCfg
 
 # from omni.isaac.dynamic_control import _dynamic_control
 from pxr import Usd, Gf
@@ -86,7 +87,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 15  # was 15
+    episode_length_s = 20  # was 15
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
@@ -97,12 +98,12 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     vel_penalty_scaling = -0.00
     torque_penalty_scaling = -0.004
     torque_limit_exeeded_penalty_scaling = -0.2
-    cube_out_of_sight_penalty_scaling = -0.0001
+    cube_out_of_sight_penalty_scaling = -0.005
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
     approach_reward = 0.035
     pickup_reward_scaling = 0.2
-    torque_limit = 999999  # was 500.0
+    torque_limit = 9999500  # was 500.0
 
     decimation = 2
     action_scale = 0.5
@@ -123,9 +124,9 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         usd_path="omniverse://localhost/MyAssets/Objects/Container.usd",
     )
 
-    # cube_usd_cfg = sim_utils.UsdFileCfg(
-    #     usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
-    # )
+    cube_usd_cfg = sim_utils.UsdFileCfg(
+        usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
+    )
 
     # Camera
     camera_rgb_cfg = CameraCfg(
@@ -184,15 +185,6 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     cube_rigid_obj_cfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/Cube",
-        spawn=cuboid_cfg,
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.50, 0.0, 1.0),
-        ),
-        debug_vis=True,
-    )
-
-    cube_rigid_obj_cfg_v2 = RigidObjectCfg(
-        prim_path="/World/envs/env_0/Cube",  # Single “source” environment
         spawn=CuboidCfg(
             size=(0.05, 0.05, 0.05),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
@@ -207,11 +199,22 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
                 restitution_combine_mode="average",
                 static_friction=1.0,
             ),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(1.0, 0.0, 0.0), metallic=0.2
+            ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=(1.0, 0.0, 1.0),  # Put it somewhere
         ),
         debug_vis=True,
+    )
+
+    contact_sensor = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor_automatic",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=True,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
     )
 
     # robot
