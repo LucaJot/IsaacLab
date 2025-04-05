@@ -674,7 +674,7 @@ class HawUr5Env(DirectRLEnv):
         # Get torque
         # print(f"Live Torque: {self.live_joint_torque[:, : len(self._arm_dof_idx)]}")
         # Check if any torque in each environment exceeds the threshold
-        if self.CL_state < 0 or self.CL_state >= 1:
+        if self.CL_state < 0 or self.CL_state > 3:
             torque_limit_exceeded = torch.any(
                 torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
                 > self.torque_limit,
@@ -691,7 +691,9 @@ class HawUr5Env(DirectRLEnv):
             )
         # Dont reset before torque penalty is applied
         else:
-            self.torque_limit_exeeded = torch.zeros(self.num_envs, device=self.device)
+            self.torque_limit_exeeded = torch.zeros(
+                self.num_envs, dtype=torch.bool, device=self.device
+            )
 
         # position reached
         self.goal_reached = torch.where(
@@ -775,7 +777,9 @@ class HawUr5Env(DirectRLEnv):
 
         self.live_joint_pos[env_ids] = joint_pos
         self.live_joint_vel[env_ids] = joint_vel
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self.robot.write_joint_state_to_sim(
+            position=joint_pos, velocity=joint_vel, joint_ids=None, env_ids=env_ids
+        )
         self.data_age[env_ids] = 0.0
         self.cubedetector.reset_data_age(env_ids)  # type: ignore
         self.goal_reached[env_ids] = 0.0
@@ -891,6 +895,7 @@ class HawUr5Env(DirectRLEnv):
             self.dist_cube_cam_minimal,
             self.cfg.approach_reward,
             self.cube_z_new,
+            self.grasp_success,
             self.cfg.pickup_reward_scaling,
         )
 
@@ -965,6 +970,7 @@ def compute_rewards(
     dist_cube_cam_minimal: torch.Tensor,
     approach_reward_scaling: float,
     cube_z: torch.Tensor,
+    grasp_success: torch.Tensor,
     pickup_reward_scaling: float,
 ) -> torch.Tensor:
 
@@ -1000,8 +1006,14 @@ def compute_rewards(
 
     goal_reached_reward = goal_reached_scaling * goal_reached
 
+    # pickup_reward = torch.where(
+    #     cube_z > 0.6,
+    #     torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
+    #     torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
+    # )
+
     pickup_reward = torch.where(
-        cube_z > 0.6,
+        grasp_success == True,
         torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
         torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
     )
@@ -1022,7 +1034,7 @@ def compute_rewards(
     # Option 2 for approach reward: Exponential decay of reward with distance
     k = 5
     approach_reward = torch.where(
-        dist_cube_cam > 0.0,
+        (dist_cube_cam > 0.0) & (data_age < 3.0),
         approach_reward_scaling * torch.exp(-k * dist_cube_cam),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )

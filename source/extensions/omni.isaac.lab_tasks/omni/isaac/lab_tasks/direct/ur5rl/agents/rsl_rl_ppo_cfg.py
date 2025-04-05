@@ -15,7 +15,7 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
 @configclass
 class Ur5RLPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 128
-    max_iterations = 100
+    max_iterations = 1000
     save_interval = 25
     experiment_name = "ur5_rl_direct"
     empirical_normalization = True

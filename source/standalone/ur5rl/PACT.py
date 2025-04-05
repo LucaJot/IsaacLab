@@ -309,8 +309,9 @@ def main():
     pretrain = True
     # Resume the last training
     resume = True
+    start_cl = 3
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 4
+    NUM_ENVS = 16
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -346,7 +347,7 @@ def main():
             -0.0030048529254358414,
             -1.0,
         ]
-        cube_pos = [1.0, 0.0, 0.58]
+        cube_pos = [1.0, 0.0, 0.55]
 
         # Start up the digital twin
 
@@ -356,17 +357,17 @@ def main():
         num_envs=NUM_ENVS,
     )
 
-    #! DEBUGGING
-    cube_pos = [1.15, 0.0, 1.0]
-    real_joint_angles = [
-        -0.08,
-        -0.1600000000,
-        0.0,
-        -2.460175625477926,
-        -1.5792139212237757,
-        -0.0,
-        -2.0,
-    ]
+    # #! DEBUGGING
+    # cube_pos = [1.15, 0.0, 1.0]
+    # real_joint_angles = [
+    #     -0.08,
+    #     -0.1600000000,
+    #     0.0,
+    #     -2.460175625477926,
+    #     -1.5792139212237757,
+    #     -0.0,
+    #     -2.0,
+    # ]
 
     # env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
@@ -377,7 +378,7 @@ def main():
         id="Isaac-Ur5-RL-Direct-v0",
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
-        randomize=False,  #! False for testing
+        randomize=True,  #! False for testing
     )
 
     # Set the initial pose of the arm in the simulator
@@ -386,10 +387,10 @@ def main():
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)  # type: ignore
 
-    env.unwrapped.set_eval_mode()  # type: ignore
+    # env.unwrapped.set_eval_mode()  # type: ignore
 
-    do_nothing(env, steps=100000)
-    return
+    # do_nothing(env, steps=100000)
+    # return
 
     if pretrain:
         import os
@@ -398,9 +399,10 @@ def main():
         # Define reward thresholds for each curriculum level (CL)
         curriculum_thresholds = {
             0: 0.0,  # unussed
-            1: -0.05,  # min mean_reward_per_episode_rsl to move to CL1
-            2: 3.0,  # min reward to go to CL2
-            3: 0.0,  # etc.
+            1: -0.10,  # min mean_reward_per_episode_rsl to move to CL1
+            2: 5.0,  # min reward to go to CL2
+            3: 9.0,  # etc.
+            4: 9.0,
         }
 
         # Plateau detection parameters
@@ -409,8 +411,8 @@ def main():
         )
         plateau_tolerance = 0.01  # min improvement needed to continue
 
-        max_iters_per_cl = 10  # Each iter runs for 100 episodes = 1000 steps per cl
-        start_cl = 1
+        max_iters_per_cl = 20  # Each iter runs for 100 episodes = 2000 steps per cl
+
         max_cl = max(curriculum_thresholds.keys())
 
         env.unwrapped.set_train_mode()
