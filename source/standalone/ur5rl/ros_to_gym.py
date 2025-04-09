@@ -160,7 +160,7 @@ class ros_to_gym:
         obs = self.get_obs_from_real_world()
         action = policy(obs)
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
-        action = action * 0.2  # * action_scale
+        action = action * action_scale
         action = action.squeeze(dim=0)
         print(f"Action: {action}")
         print(f"Observations: {obs}")
@@ -168,10 +168,10 @@ class ros_to_gym:
         self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
         return obs
 
-    def step_real_with_action(self, action):
+    def step_real_with_action(self, action, action_scale=0.08):
         """Apply action command to the real world."""
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
-        action = action * 0.08  # * action_scale
+        action = action * action_scale
         action = action.squeeze(dim=0)
         # print(f"Action: {action}")
         # Execute the action on the real robot
