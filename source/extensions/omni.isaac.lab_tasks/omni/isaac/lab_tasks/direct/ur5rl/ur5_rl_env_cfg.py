@@ -97,12 +97,12 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
     torque_penalty_scaling = -0.0005
-    torque_limit_exeeded_penalty_scaling = -0.2
+    torque_limit_exeeded_penalty_scaling = -0.1
     cube_out_of_sight_penalty_scaling = -0.0003
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
-    approach_reward = 0.05
-    pickup_reward_scaling = 0.2
+    approach_reward = 0.03
+    pickup_reward_scaling = 0.02  #! was 0.2
     torque_limit = 500  # was 500.0
 
     decimation = 2
