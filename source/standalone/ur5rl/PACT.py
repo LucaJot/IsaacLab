@@ -121,6 +121,7 @@ def move_to_detection_test_positions_real(
     output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
     steps_per_target=1500,
     stop_epsilon=0.02,  # Stop if joint error is below this [rad]
+    action_scale=0.08,  # Scale for real robot
 ):
     import csv
     import torch
@@ -157,7 +158,11 @@ def move_to_detection_test_positions_real(
 
             for _ in range(steps_per_target):
                 joint_angles = obs[0][0][0:6]
+                joint_angles_sim = obs_sim[0][0][0:6]
+                gripper_action = obs[0][0][19]
+                gripper_action_sim = obs_sim[0][0][19]
                 cube_pos = obs[0][0][19:22]
+                cube_pos_sim = obs_sim[0][0][19:22]
 
                 # Compute delta and stop if close enough
                 delta = target_tensor - joint_angles.cpu()
@@ -167,8 +172,9 @@ def move_to_detection_test_positions_real(
 
                 scaled_delta = torch.clamp(delta * 5.0, -1.0, 1.0)  # Soft gain
                 action = torch.cat((scaled_delta, gripper_action)).unsqueeze(0)
+                action = torch.tanh(action)
 
-                rg_node.step_real_with_action(action)
+                rg_node.step_real_with_action(action, action_scale=action_scale)
                 obs = rg_node.get_obs_from_real_world()
                 obs_sim, _, _, _ = env.step(action)
 
@@ -179,6 +185,94 @@ def move_to_detection_test_positions_real(
                         idx,
                         *obs[0][0:6].cpu().numpy(),
                         *obs[0][19:22].cpu().numpy(),
+                    ]
+                )
+                step_counter += 1
+
+
+def move_to_detection_test_positions_real_and_sim(
+    rg_node: ros_to_gym,
+    env,
+    output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
+    steps_per_target=1500,
+    stop_epsilon=0.02,  # Stop if joint error is below this [rad]
+    action_scale=0.08,  # Scale for real robot
+):
+
+    target_positions = [
+        [-0.0, -2.66, 2.43, -2.54, -1.71, -0.0],
+        [-0.0, -1.26, 0.77, -2.3, -1.71, -0.0],
+        [-0.0, -0.99, 0.77, -2.0, -1.71, -0.0],
+    ]
+
+    gripper_action = torch.tensor([-1.0])  # Fixed gripper value
+
+    with open(output_file, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(
+            [
+                "step",
+                "target_idx",
+                *[f"real_joint_{i}" for i in range(6)],
+                "real_gripper",
+                "real_cube_x",
+                "real_cube_y",
+                "real_cube_z",
+                *[f"sim_joint_{i}" for i in range(6)],
+                "sim_gripper",
+                "sim_cube_x",
+                "sim_cube_y",
+                "sim_cube_z",
+            ]
+        )
+
+        # Reset environment
+        obs = rg_node.get_obs_from_real_world()
+        actions = torch.zeros(7).unsqueeze(0)
+        obs_sim, _, _, _ = env.step(actions)
+
+        step_counter = 0
+        for idx, target in enumerate(target_positions):
+            target_tensor = torch.tensor(target)
+
+            for _ in range(steps_per_target):
+                # Real-world observations
+                joint_angles = obs[0][0][0:6].cpu().numpy()
+                gripper_state = obs[0][0][18].cpu().item()
+                cube_pos = obs[0][0][19:22].cpu().numpy()
+
+                # Simulated observations
+                joint_angles_sim = obs_sim[0][0][0:6].cpu().numpy()
+                gripper_state_sim = obs_sim[0][0][18].cpu().item()
+                cube_pos_sim = obs_sim[0][0][19:22].cpu().numpy()
+
+                # Compute delta and stop if close enough
+                delta = target_tensor - torch.tensor(joint_angles)
+                if torch.all(delta.abs() < stop_epsilon):
+                    print(f"[INFO] Reached target {idx} after {step_counter} steps.")
+                    break
+
+                scaled_delta = torch.clamp(delta * 5.0, -1.0, 1.0)  # Soft gain
+                action = torch.cat(
+                    (scaled_delta, torch.tensor([gripper_state]))
+                ).unsqueeze(0)
+                action = torch.tanh(action)
+
+                rg_node.step_real_with_action(action, action_scale=action_scale)
+                obs = rg_node.get_obs_from_real_world()
+                obs_sim, _, _, _ = env.step(action)
+
+                # Log both real and simulated data
+                writer.writerow(
+                    [
+                        step_counter,
+                        idx,
+                        *joint_angles,
+                        gripper_state,
+                        *cube_pos,
+                        *joint_angles_sim,
+                        gripper_state_sim,
+                        *cube_pos_sim,
                     ]
                 )
                 step_counter += 1
@@ -308,13 +402,20 @@ def main():
     # Pretrain the model
     pretrain = True
     # Resume the last training
-    resume = True
+    resume = False
     start_cl = 3
     EXPERIMENT_NAME = "_"
     NUM_ENVS = 16
+    ACTION_SCALE_REAL = 0.08
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
+
+    # Set environment configuration
+    env_cfg = parse_env_cfg(
+        task_name="Isaac-Ur5-RL-Direct-v0",
+        num_envs=NUM_ENVS,
+    )
 
     # Set rl learning configuration
     agent_cfg, log_dir, resume_path = set_learning_config()
@@ -349,36 +450,17 @@ def main():
         ]
         cube_pos = [1.0, 0.0, 0.55]
 
-        # Start up the digital twin
-
-    # Set environment configuration
-    env_cfg = parse_env_cfg(
-        task_name="Isaac-Ur5-RL-Direct-v0",
-        num_envs=NUM_ENVS,
-    )
-
-    # #! DEBUGGING
-    # cube_pos = [1.15, 0.0, 1.0]
-    # real_joint_angles = [
-    #     -0.08,
-    #     -0.1600000000,
-    #     0.0,
-    #     -2.460175625477926,
-    #     -1.5792139212237757,
-    #     -0.0,
-    #     -2.0,
-    # ]
-
     # env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
+    if use_real_hw:
+        env_cfg.action_scale = ACTION_SCALE_REAL  # type: ignore
 
-    # Create simulated environment with the real-world state
+    # Create digital twin with the real-world state
     env = gym.make(
         id="Isaac-Ur5-RL-Direct-v0",
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
-        randomize=True,  #! False for testing
     )
 
     # Set the initial pose of the arm in the simulator
@@ -401,7 +483,7 @@ def main():
             0: 0.0,  # unussed
             1: -0.10,  # min mean_reward_per_episode_rsl to move to CL1
             2: 5.0,  # min reward to go to CL2
-            3: 9.0,  # etc.
+            3: 11.0,  # etc.
             4: 9.0,
         }
 
@@ -475,6 +557,14 @@ def main():
                 current_cl += 1
 
     env.unwrapped.set_eval_mode()  # type: ignore
+
+    move_to_detection_test_positions_real(
+        rg_node,
+        env,
+        output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
+        steps_per_target=2000,
+        action_scale=ACTION_SCALE_REAL,
+    )
     # Run the task in the simulator
     success, interrupt, obs, policy = run_task_in_sim(
         env,
