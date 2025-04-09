@@ -202,26 +202,26 @@ class Ur5JointController(Node):
             self.set_gripper(self.gripper_target)  # type: ignore
             self.current_gripper_state = self.gripper_target
 
-        if sum(self.current_angle_delta) != 0:
-            # Calculate the new target joint positions by adding the delta to the current joint positions
-            new_target = [
-                delta + position
-                for delta, position in zip(
-                    self.current_angle_delta, self.joint_positions_GT
-                )
-            ]
+        # if sum(self.current_angle_delta) != 0:
+        # Calculate the new target joint positions by adding the delta to the current joint positions
+        new_target = [
+            delta + position
+            for delta, position in zip(
+                self.current_angle_delta, self.joint_positions_GT
+            )
+        ]
 
-            # Enforce joint limits
-            new_target = self.enforce_joint_limits(new_target)
+        # Enforce joint limits
+        new_target = self.enforce_joint_limits(new_target)
 
-            # Create a ForwardPositionController message
-            new_target_msg = Float64MultiArray()
-            new_target_msg.data = new_target
+        # Create a ForwardPositionController message
+        new_target_msg = Float64MultiArray()
+        new_target_msg.data = new_target
 
-            # Publish the target joint state message
-            self.forward_pos_pub.publish(new_target_msg)
-            self.current_angle_delta = [np.float64(0.0)] * 6
-            self.joint_positions_GT = new_target
+        # Publish the target joint state message
+        self.forward_pos_pub.publish(new_target_msg)
+        self.current_angle_delta = [np.float64(0.0)] * 6
+        self.joint_positions_GT = new_target
 
     def set_gripper(self, state: bool):
         req = SetIO.Request()
