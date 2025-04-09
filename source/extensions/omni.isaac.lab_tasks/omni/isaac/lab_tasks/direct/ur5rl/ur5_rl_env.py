@@ -182,6 +182,7 @@ class HawUr5Env(DirectRLEnv):
             self.scene.num_envs, device=self.device
         )
         self.mean_dist_cam_cube = 0
+        self.mean_torque = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         self.grasp_success = torch.zeros(self.scene.num_envs, device=self.device)
 
@@ -371,13 +372,14 @@ class HawUr5Env(DirectRLEnv):
     ) -> torch.Tensor:
         """Converts gripper action [-1,1] into actual joint positions while respecting locking logic."""
 
+        gripper_lim = 1.0  # Gripper limits
         # Step 1: Update `gripper_action_bin` only for unlocked grippers
         self.gripper_action_bin = torch.where(
             ~self.gripper_locked,  # Only update where gripper is unlocked
             torch.where(
                 gripper_action > 0,
-                torch.tensor(1.0, device="cuda:0"),
-                torch.tensor(-1.0, device="cuda:0"),
+                torch.tensor(gripper_lim, device="cuda:0"),
+                torch.tensor(-gripper_lim, device="cuda:0"),
             ),
             self.gripper_action_bin,  # Keep previous value for locked grippers
         )
@@ -399,7 +401,7 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # Ensure no faulty values are present
-        self.gripper_steps = torch.clamp(self.gripper_steps, -1.0, 1.0)
+        self.gripper_steps = torch.clamp(self.gripper_steps, -gripper_lim, gripper_lim)
 
         # Step 4: Unlock gripper once `gripper_steps` reaches `gripper_action_bin`
         reached_target = torch.isclose(
@@ -412,14 +414,15 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # Step 5: Convert `gripper_steps` into joint targets
+        angle_lim = 0.61  # was 35
         gripper_joint_targets = torch.stack(
             [
-                35 * self.gripper_steps,  # "left_outer_knuckle_joint"
-                -35 * self.gripper_steps,  # "left_inner_finger_joint"
-                -35 * self.gripper_steps,  # "left_inner_knuckle_joint"
-                -35 * self.gripper_steps,  # "right_inner_knuckle_joint"
-                35 * self.gripper_steps,  # "right_outer_knuckle_joint"
-                35 * self.gripper_steps,  # "right_inner_finger_joint"
+                angle_lim * self.gripper_steps,  # "left_outer_knuckle_joint"
+                -angle_lim * self.gripper_steps,  # "left_inner_finger_joint"
+                -angle_lim * self.gripper_steps,  # "left_inner_knuckle_joint"
+                -angle_lim * self.gripper_steps,  # "right_inner_knuckle_joint"
+                angle_lim * self.gripper_steps,  # "right_outer_knuckle_joint"
+                angle_lim * self.gripper_steps,  # "right_inner_finger_joint"
             ],
             dim=1,
         )  # Shape: (num_envs, 6)
@@ -490,6 +493,10 @@ class HawUr5Env(DirectRLEnv):
         # Assign calculated joint target to self.actions
         self.actions = self.jointpos_script_GT
 
+        # print(
+        #     f"target: {self.gripper_action_bin[0]},\nsteps: {self.gripper_steps[0]}, \nlocked: {self.gripper_locked[0]}"
+        # )
+
     def _apply_action(self) -> None:
         self.robot.set_joint_position_target(
             self.actions, joint_ids=self.haw_ur5_dof_idx
@@ -542,6 +549,7 @@ class HawUr5Env(DirectRLEnv):
                 and raw_data_R[0][3] == raw_data_C[0][2]
             ):
                 success_flags.append(True)
+                print(f"Env {i}: Grasp success")
             else:
                 success_flags.append(False)
 
@@ -587,6 +595,8 @@ class HawUr5Env(DirectRLEnv):
 
         self.cube_z_new = cube_pos[:, 2]
 
+        # print(f"t: {self.dist_cube_cam[0]}")
+
         # If on startup, set cube z pos old to new
         if self.cube_z_old is None:
             self.cube_z_old = self.cube_z_new.clone()
@@ -612,7 +622,7 @@ class HawUr5Env(DirectRLEnv):
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-                self.gripper_action_bin.unsqueeze(dim=1).unsqueeze(dim=1),
+                self.gripper_steps.unsqueeze(dim=1).unsqueeze(dim=1),
                 cube_pos_w.unsqueeze(dim=1),
                 self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
@@ -636,10 +646,7 @@ class HawUr5Env(DirectRLEnv):
             self.episode_data["dist_cube_cam"].append(
                 float(self.dist_cube_cam[0].cpu())
             )
-            mean_torque = torch.mean(
-                torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
-            )
-            self.episode_data["mean_torque"].append(float(mean_torque.cpu()))
+            self.episode_data["mean_torque"].append(float(self.mean_torque.cpu()))
 
         if torch.isnan(obs).any():
             warnings.warn("[WARNING] NaN detected in observations!", UserWarning)
@@ -650,7 +657,18 @@ class HawUr5Env(DirectRLEnv):
                 obs,
             )
 
-        observations = {"policy": obs, "goal_reached": self.goal_reached}
+        # Calculate mean torque
+        mean_torque = torch.mean(
+            torch.abs(self.live_joint_torque[:, : len(self._arm_dof_idx)])
+        )
+        if mean_torque != 0:
+            self.mean_torque = (self.mean_torque * 99 + mean_torque) / 100
+
+        observations = {
+            "policy": obs,
+            "grasp_success": self.grasp_success,
+            "mean_torque": self.mean_torque,
+        }
         return observations
 
     def get_sim_joint_positions(self) -> torch.Tensor | None:
@@ -1020,6 +1038,20 @@ def compute_rewards(
 
     pickup_reward = pickup_reward * pickup_reward_scaling
 
+    open_gripper_incentive = torch.where(
+        (dist_cube_cam > 0.17) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
+        torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    )
+
+    close_gripper_incentive = torch.where(
+        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.17) & (gripper_action_bin > 0),
+        torch.tensor(0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    )
+
+    pickup_reward += open_gripper_incentive + close_gripper_incentive
+
     # Option 1 for approach reward: Minimal distance to cube is stored and improvment rewarded
     # improvement = dist_cube_cam_minimal - dist_cube_cam
     # improvement_reward = torch.clamp(improvement, min=0.0) * approach_reward_scaling
@@ -1032,6 +1064,11 @@ def compute_rewards(
     # )
 
     # Option 2 for approach reward: Exponential decay of reward with distance
+    dist_cube_cam = torch.where(
+        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.2),
+        torch.tensor(0.2, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        dist_cube_cam,
+    )
     k = 5
     approach_reward = torch.where(
         (dist_cube_cam > 0.0) & (data_age < 3.0),
