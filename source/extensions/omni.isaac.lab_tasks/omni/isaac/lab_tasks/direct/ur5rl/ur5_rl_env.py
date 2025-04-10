@@ -6,6 +6,7 @@ import os
 import warnings
 import torch
 from collections.abc import Sequence
+import time
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
@@ -572,6 +573,8 @@ class HawUr5Env(DirectRLEnv):
         self.cube_z_old = (
             self.cube_z_new.clone() if self.cube_z_old is not None else None  # type: ignore
         )
+        #! Measure potential bottleneck
+        # start = time.time()
 
         cam_poses = self.camera_rgb.data.pos_w - self.scene.env_origins
 
@@ -595,9 +598,11 @@ class HawUr5Env(DirectRLEnv):
         self.dist_cube_cam = torch.tensor(dist_cube_cam, device=self.device)
         pos_sensor = torch.from_numpy(pos_sensor).to(self.device)
 
-        self.cube_z_new = cube_pos[:, 2]
+        # elapsed = time.time() - start
+        # print(f"[DEBUG] Cube detection took: {(elapsed):.4f} s")
+        #! Measure potential bottleneck
 
-        # print(f"t: {self.dist_cube_cam[0]}")
+        self.cube_z_new = cube_pos[:, 2]
 
         # If on startup, set cube z pos old to new
         if self.cube_z_old is None:
@@ -641,9 +646,9 @@ class HawUr5Env(DirectRLEnv):
         obs = obs.float()
         obs = obs.squeeze(dim=1)
 
-        print(
-            f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nCubePosW:{cube_pos_w[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
-        )
+        # print(
+        #     f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nCubePosW:{cube_pos_w[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
+        # )
         #! LOGGING
         # ✅ Save only for the first environment (Env0)
         if self.LOG_ENV_DETAILS:
