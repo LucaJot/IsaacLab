@@ -16,7 +16,7 @@ class CubeDetector:
         send_joint_command
         """
         self.real = real
-        self.area_thresh = 70 if real else 150  # ! TEST  70 Reasonable value for real
+        self.area_thresh = 70 if real else 150  # 70 Reasonable value for real
         self.clipping_range = 2000.0 if real else 5.0
         self.data_age = np.zeros(num_envs)
         # Init with NaN to indicate that no cube has been detected yet
@@ -153,7 +153,7 @@ class CubeDetector:
             # rgb_pose[2] -= 0.35
 
             hsv = cv2.cvtColor(rgb_image_np, cv2.COLOR_BGR2HSV)
-            #! DARKEN THE IMAGE FOR ANALYSIS
+            # DARKEN THE IMAGE FOR ANALYSIS
             # hsv[:, :, 2] = hsv[:, :, 2] * 0.5
             if not self.real:
                 lower_red1 = np.array([0, 50, 40])
