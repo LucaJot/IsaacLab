@@ -392,7 +392,7 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # Step 3: Gradually update `gripper_steps` towards `gripper_action_bin`
-        step_size = 0.01
+        step_size = 0.05
         self.gripper_steps = torch.where(
             self.gripper_locked,  # If gripper is locked
             self.gripper_steps
@@ -573,12 +573,14 @@ class HawUr5Env(DirectRLEnv):
             self.cube_z_new.clone() if self.cube_z_old is not None else None  # type: ignore
         )
 
+        cam_poses = self.camera_rgb.data.pos_w - self.scene.env_origins
+
         # Extract the cubes position from the rgb and depth images an convert it to a tensor
         cube_pos, cube_pos_w, data_age, dist_cube_cam, pos_sensor = (
             self.cubedetector.get_cube_positions(
                 rgb_images=rgb.cpu().numpy(),
                 depth_images=depth.squeeze(-1).cpu().numpy(),
-                rgb_camera_poses=self.camera_rgb.data.pos_w.cpu().numpy(),
+                rgb_camera_poses=cam_poses.cpu().numpy(),
                 rgb_camera_quats=self.camera_rgb.data.quat_w_world.cpu().numpy(),
                 camera_intrinsics_matrices_k=self.camera_rgb.data.intrinsic_matrices.cpu().numpy(),
                 base_link_poses=self.scene.articulations["ur5"]
@@ -615,6 +617,8 @@ class HawUr5Env(DirectRLEnv):
             cube_pos_w - self.cube_goal_pos, dim=-1, keepdim=False
         )
 
+        self.data_age = torch.clip(input=self.data_age, min=0.0, max=10.0)
+
         # print(f"Mean distance camera to cube: {self.dist_cube_cam}")
         # Obs of shape [n_envs, 1, 27])
         obs = torch.cat(
@@ -624,7 +628,9 @@ class HawUr5Env(DirectRLEnv):
                 self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.gripper_steps.unsqueeze(dim=1).unsqueeze(dim=1),
                 cube_pos_w.unsqueeze(dim=1),
-                self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(dim=1),
+                self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
+                    dim=1
+                ),  #! Not informative
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.dist_cube_cam.unsqueeze(dim=1).unsqueeze(dim=1),
                 pos_sensor.unsqueeze(dim=1),
@@ -635,9 +641,9 @@ class HawUr5Env(DirectRLEnv):
         obs = obs.float()
         obs = obs.squeeze(dim=1)
 
-        # print(
-        #     f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nDistCubeCamMinimal: {self.dist_cube_cam_minimal[0]}\nCubePos:{cube_pos[0]}\nCubePosW:{cube_pos_w[0]}\nCubeDistToGoal:{self.cube_distance_to_goal[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
-        # )
+        print(
+            f"Env0 obs Debug\nDistCubeCam:{self.dist_cube_cam[0]}\nCubePosW:{cube_pos_w[0]}\nDataAge:{self.data_age[0]}\nPosSensor:{pos_sensor[0]}\n\n"
+        )
         #! LOGGING
         # ✅ Save only for the first environment (Env0)
         if self.LOG_ENV_DETAILS:
@@ -1039,13 +1045,13 @@ def compute_rewards(
     pickup_reward = pickup_reward * pickup_reward_scaling
 
     open_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.17) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
+        (dist_cube_cam > 0.18) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
         torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
     close_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.17) & (gripper_action_bin > 0),
+        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.18) & (gripper_action_bin > 0),
         torch.tensor(0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
