@@ -194,10 +194,12 @@ def run_task_in_sim(
                     return False, False, obs, policy
                 else:
                     print("Interrupt detected!")
+                    if info["observations"]["torque_limit_exeeded"][0]:
+                        print("Torque Limit Exceeded!")
                     last_obs = obs.clone()
                     torch.save(last_obs, os.path.join(log_dir, "last_obs.pt"))
                     return False, True, obs, policy
 
-            if info["observations"]["goal_reached"][0]:  # type: ignore
-                print("Goal Reached!")
+            if info["observations"]["grasp_success"][0]:  # type: ignore
+                print("Grasp Successful!")
                 return True, False, obs, policy

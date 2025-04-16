@@ -21,6 +21,10 @@ class ros_to_gym:
         self.realsense: realsense_obs_reciever = None
 
         self.cube_goal_pos = [1.0, -0.1, 0.8]  #! Remove and replace with pickup?
+        self.real_cube_positions = None
+        self.data_age = None
+        self.z = None
+        self.pos_sensor = None
 
     def run_ros_nodes(self):
         """Start both ROS 2 nodes using a MultiThreadedExecutor."""
@@ -78,6 +82,9 @@ class ros_to_gym:
 
 
         """
+        # # mesure time to get obs
+        # start_time = time.time()
+
         # Get the current joint positions from the real robot
         while self.ur5_control.get_joint_observation() == None:
             time.sleep(0.01)
@@ -101,9 +108,9 @@ class ros_to_gym:
         real_joint_positions_t = torch.tensor(real_joint_info["joint_positions"]).to(
             "cuda:0"
         )
-        real_joint_velocities_t = torch.tensor(real_joint_info["joint_velocities"]).to(
-            "cuda:0"
-        )
+        # real_joint_velocities_t = torch.tensor(real_joint_info["joint_velocities"]).to(
+        #     "cuda:0"
+        # )
         real_joint_torques_t = torch.tensor(real_joint_info["joint_torques"]).to(
             "cuda:0"
         )
@@ -113,7 +120,7 @@ class ros_to_gym:
 
         # Ensure correct shape for tensors before concatenation
         real_joint_positions_t = real_joint_positions_t.unsqueeze(0)  # (1, 6)
-        real_joint_velocities_t = real_joint_velocities_t.unsqueeze(0)  # (1, 6)
+        # real_joint_velocities_t = real_joint_velocities_t.unsqueeze(0)  # (1, 6)
         real_joint_torques_t = real_joint_torques_t.unsqueeze(0)  # (1, 6)
         real_gripper_state_t = real_gripper_state_t
         cube_pos = cube_pos.unsqueeze(0)  # (1, 3)
@@ -122,15 +129,15 @@ class ros_to_gym:
         obs = torch.cat(
             (
                 real_joint_positions_t.unsqueeze(dim=1),
-                real_joint_velocities_t.unsqueeze(dim=1),
+                # real_joint_velocities_t.unsqueeze(dim=1),
                 real_joint_torques_t.unsqueeze(dim=1),
                 real_gripper_state_t.unsqueeze(dim=1).unsqueeze(
                     dim=1
                 ),  # Gripper open or clsed
                 cube_pos.unsqueeze(dim=1),  # Where is the cube on the world frame
-                cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
-                    dim=1
-                ),  # How far is the cube from the goalpossition
+                # cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
+                #     dim=1
+                # ),  # How far is the cube from the goalpossition
                 data_age.unsqueeze(dim=1).unsqueeze(
                     dim=1
                 ),  # Age off the cubes last seen position
@@ -143,7 +150,12 @@ class ros_to_gym:
         )
 
         obs = obs.float()
-        obs = obs.squeeze(dim=1)
+        # obs = obs.squeeze(dim=1)
+
+        # # time to get obs
+        # elapsed = time.time() - start_time
+
+        # print(f"Time to get obs: {elapsed:.4f} seconds")
 
         return obs, (
             real_joint_info,
@@ -157,11 +169,11 @@ class ros_to_gym:
     def step_real(self, policy, action_scale=1.0):
         """Play with RSL-RL agent in real world."""
         # Get the current joint positions from the real robot
-        obs = self.get_obs_from_real_world()
+        obs, _ = self.get_obs_from_real_world()
         action = policy(obs)
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
         action = action * action_scale
-        action = action.squeeze(dim=0)
+        action = action.squeeze(dim=0).squeeze(dim=0)
         print(f"Action: {action}")
         print(f"Observations: {obs}")
         # Execute the action on the real robot

@@ -15,7 +15,7 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
 @configclass
 class Ur5RLPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 128
-    max_iterations = 1000
+    max_iterations = 3000
     save_interval = 25
     experiment_name = "ur5_rl_direct"
     empirical_normalization = True
@@ -23,7 +23,7 @@ class Ur5RLPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         init_noise_std=0.6,
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[256, 128, 64],
-        activation="elu",
+        activation="tanh",
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,

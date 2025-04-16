@@ -15,9 +15,13 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
-# always enable cameras to record video
 
+
+# Set headless mode
+args_cli.headless = False
+# always enable cameras to record video
 args_cli.enable_cameras = True
+
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -50,6 +54,7 @@ import json
 import os
 import torch
 import numpy as np
+import time
 
 
 def move_to_detection_test_positions_alt(
@@ -158,11 +163,11 @@ def move_to_detection_test_positions_real(
 
             for _ in range(steps_per_target):
                 joint_angles = obs[0][0][0:6]
-                joint_angles_sim = obs_sim[0][0][0:6]
+                joint_angles_sim = obs_sim[0][0:6]
                 gripper_action = obs[0][0][19]
-                gripper_action_sim = obs_sim[0][0][19]
+                gripper_action_sim = obs_sim[0][19]
                 cube_pos = obs[0][0][19:22]
-                cube_pos_sim = obs_sim[0][0][19:22]
+                cube_pos_sim = obs_sim[0][19:22]
 
                 # Compute delta and stop if close enough
                 delta = target_tensor - joint_angles.cpu()
@@ -193,7 +198,7 @@ def move_to_detection_test_positions_real(
 def move_to_detection_test_positions_real_and_sim(
     rg_node: ros_to_gym,
     env,
-    output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
+    output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/sim2real_test_log.csv",
     steps_per_target=1500,
     stop_epsilon=0.02,  # Stop if joint error is below this [rad]
     action_scale=0.08,  # Scale for real robot
@@ -218,11 +223,15 @@ def move_to_detection_test_positions_real_and_sim(
                 "real_cube_x",
                 "real_cube_y",
                 "real_cube_z",
+                *[f"real_vel_{i}" for i in range(6)],
+                *[f"real_torque_{i}" for i in range(6)],
                 *[f"sim_joint_{i}" for i in range(6)],
                 "sim_gripper",
                 "sim_cube_x",
                 "sim_cube_y",
                 "sim_cube_z",
+                *[f"sim_vel_{i}" for i in range(6)],
+                *[f"sim_torque_{i}" for i in range(6)],
             ]
         )
 
@@ -240,11 +249,15 @@ def move_to_detection_test_positions_real_and_sim(
                 joint_angles = obs[0][0][0:6].cpu().numpy()
                 gripper_state = obs[0][0][18].cpu().item()
                 cube_pos = obs[0][0][19:22].cpu().numpy()
+                vel = obs[0][0][6:12].cpu().numpy()
+                torque = obs[0][0][12:18].cpu().numpy()
 
                 # Simulated observations
-                joint_angles_sim = obs_sim[0][0][0:6].cpu().numpy()
-                gripper_state_sim = obs_sim[0][0][18].cpu().item()
-                cube_pos_sim = obs_sim[0][0][19:22].cpu().numpy()
+                joint_angles_sim = obs_sim[0][0:6].cpu().numpy()
+                gripper_state_sim = obs_sim[0][18].cpu().item()
+                cube_pos_sim = obs_sim[0][19:22].cpu().numpy()
+                vel_sim = obs_sim[0][6:12].cpu().numpy()
+                torque_sim = obs_sim[0][12:18].cpu().numpy()
 
                 # Compute delta and stop if close enough
                 delta = target_tensor - torch.tensor(joint_angles)
@@ -262,7 +275,6 @@ def move_to_detection_test_positions_real_and_sim(
                 obs = rg_node.get_obs_from_real_world()
                 obs_sim, _, _, _ = env.step(action)
 
-                # Log both real and simulated data
                 writer.writerow(
                     [
                         step_counter,
@@ -270,11 +282,16 @@ def move_to_detection_test_positions_real_and_sim(
                         *joint_angles,
                         gripper_state,
                         *cube_pos,
+                        *vel,
+                        *torque,
                         *joint_angles_sim,
                         gripper_state_sim,
                         *cube_pos_sim,
+                        *vel_sim,
+                        *torque_sim,
                     ]
                 )
+
                 step_counter += 1
 
 
@@ -346,7 +363,10 @@ def move_to_detection_test_positions(
 def do_nothing(env, steps=500):
     actions = torch.zeros(7).unsqueeze(0)
     for _ in range(steps):
+        start = time.time()
         obs, _, _, info = env.step(actions)
+        elapsed = time.time() - start
+        print(f"[DEBUG] Doing nothing once took: {(elapsed):.4f} s")
 
 
 def extract_learning_metrics(log_results):
@@ -402,11 +422,12 @@ def main():
     # Pretrain the model
     pretrain = True
     # Resume the last training
-    resume = False
+    resume = True
     start_cl = 3
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 16
-    ACTION_SCALE_REAL = 0.08
+    NUM_ENVS = 30  #  28
+    ACTION_SCALE_REAL = 0.1
+    RANDOMIZE = True
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -435,9 +456,10 @@ def main():
             _,
         ) = rg_node.get_obs_from_real_world()
         # Shift cube pos to the correct height
-        cube_pos[2] += 0.2
+        #!cube_pos[2] += 0.2
         # Store joint angles
         real_joint_angles = real_joint_info["joint_positions"]  # type: ignore
+
     else:
         real_joint_angles = [
             -0.15472919145692998,
@@ -448,19 +470,22 @@ def main():
             -0.0030048529254358414,
             -1.0,
         ]
-        cube_pos = [1.0, 0.0, 0.55]
+        cube_pos = [1.0, 0.0, 0.57]
 
     # env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
     if use_real_hw:
-        env_cfg.action_scale = ACTION_SCALE_REAL  # type: ignore
+        env_cfg.action_scale = ACTION_SCALE_REAL * 2  # type: ignore # * 2 to increase overall execution speed
+        env_cfg.CL_state = 1  # type: ignore
+        env_cfg.episode_length_s = 90000
 
     # Create digital twin with the real-world state
     env = gym.make(
         id="Isaac-Ur5-RL-Direct-v0",
         cfg=env_cfg,
         cube_goal_pos=cube_goal_pos,
+        randomize=RANDOMIZE,
     )
 
     # Set the initial pose of the arm in the simulator
@@ -470,8 +495,13 @@ def main():
     env = RslRlVecEnvWrapper(env)  # type: ignore
 
     # env.unwrapped.set_eval_mode()  # type: ignore
-
-    # do_nothing(env, steps=100000)
+    # move_to_detection_test_positions_real_and_sim(
+    #     rg_node,
+    #     env,
+    #     output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/sim2real_all_info_log.csv",
+    #     steps_per_target=2000,
+    #     action_scale=ACTION_SCALE_REAL,
+    # )
     # return
 
     if pretrain:
@@ -558,13 +588,6 @@ def main():
 
     env.unwrapped.set_eval_mode()  # type: ignore
 
-    move_to_detection_test_positions_real(
-        rg_node,
-        env,
-        output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/detection_test_log.csv",
-        steps_per_target=2000,
-        action_scale=ACTION_SCALE_REAL,
-    )
     # Run the task in the simulator
     success, interrupt, obs, policy = run_task_in_sim(
         env,
@@ -577,9 +600,8 @@ def main():
 
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
-    interrupt = True  #! Force Retrain for Debug
-    # success = True  #! Force Real Robot for Debug
-    return
+    # interrupt = True  #! Force Retrain for Debug
+    success = True  #! Force Real Robot for Debug
 
     if success:
         print("Task solved in Sim!")
@@ -588,7 +610,7 @@ def main():
         while not rg_node.goal_reached():
             obs = rg_node.step_real(
                 policy,
-                action_scale=env_cfg.action_scale,
+                action_scale=ACTION_SCALE_REAL * 0.5,
             )
             print(f"Observations: {obs}")
             # TODO Interrupts catchen

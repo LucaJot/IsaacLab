@@ -186,6 +186,7 @@ class HawUr5Env(DirectRLEnv):
         self.mean_torque = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         self.grasp_success = torch.zeros(self.scene.num_envs, device=self.device)
+        self.partial_grasp = torch.zeros(self.scene.num_envs, device=self.device)
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -452,17 +453,18 @@ class HawUr5Env(DirectRLEnv):
         ]
         # Check if the sim joints deviate too much from the script ground truth joints
         if not torch.allclose(
-            current_main_joint_positions, current_main_joint_positions_sim, atol=0.5e-2
+            current_main_joint_positions, current_main_joint_positions_sim, atol=0.1
         ):
-            # if self.cfg.verbose_logging:
-            #     print(
-            #         f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
-            #     )
+            if self.cfg.verbose_logging:
+                print(
+                    f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
+                )
             self.jointpos_script_GT = current_main_joint_positions_sim.clone()
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         # Normalize the actions -1 and 1
         actions_capped = torch.tanh(actions)
+        actions_capped[:, 5] = 0.0
         # Separate the main joint actions (first 6) and the gripper action (last one)
         main_joint_deltas = actions_capped[:, :6]
         gripper_action = actions_capped[:, 6]  # Shape: (num_envs)
@@ -492,7 +494,9 @@ class HawUr5Env(DirectRLEnv):
         )
 
         # Assign calculated joint target to self.actions
+        self.jointpos_script_GT[:, 5] = 0.0
         self.actions = self.jointpos_script_GT
+        # self.actions[:, 5] = 0.0
 
         # print(
         #     f"target: {self.gripper_action_bin[0]},\nsteps: {self.gripper_steps[0]}, \nlocked: {self.gripper_locked[0]}"
@@ -503,7 +507,7 @@ class HawUr5Env(DirectRLEnv):
             self.actions, joint_ids=self.haw_ur5_dof_idx
         )
 
-    def check_grasp_success(self) -> torch.Tensor:
+    def check_grasp_success(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Checks if the robot gripper in each environment successfully grasps the cube.
 
@@ -511,6 +515,7 @@ class HawUr5Env(DirectRLEnv):
             torch.Tensor: A boolean tensor of shape (num_envs,) indicating grasp success per environment.
         """
         success_flags = []
+        partial_grasp_flags = []
 
         for i in range(self.scene.num_envs):
             # Resolve contact sensor paths for this env
@@ -548,18 +553,43 @@ class HawUr5Env(DirectRLEnv):
                 and raw_data_C
                 and raw_data_L[0][3] == raw_data_C[0][2]
                 and raw_data_R[0][3] == raw_data_C[0][2]
+                and self.dist_cube_cam[i].item() > 0.15
             ):
                 success_flags.append(True)
+                partial_grasp_flags.append(False)
                 print(f"Env {i}: Grasp success")
+
+            elif (
+                Sensor_L.in_contact
+                and Sensor_Cube.in_contact
+                and raw_data_L
+                and raw_data_C
+                and raw_data_L[0][3] == raw_data_C[0][2]
+                and self.dist_cube_cam[i].item() > 0.15
+            ) or (
+                Sensor_R.in_contact
+                and Sensor_Cube.in_contact
+                and raw_data_R
+                and raw_data_C
+                and raw_data_R[0][3] == raw_data_C[0][2]
+                and self.dist_cube_cam[i].item() > 0.15
+            ):
+                print(f"Env {i}: Partial grasp")
+                partial_grasp_flags.append(True)
+                success_flags.append(False)
             else:
                 success_flags.append(False)
+                partial_grasp_flags.append(False)
 
         # Convert to torch tensor
-        return torch.tensor(success_flags, device=self.device)
+        return (
+            torch.tensor(success_flags, device=self.device),
+            torch.tensor(partial_grasp_flags, device=self.device),
+        )
 
     def _get_observations(self) -> dict:
 
-        self.grasp_success = self.check_grasp_success()
+        self.grasp_success, self.partial_grasp = self.check_grasp_success()
         # print(f"Grasp success: {self.grasp_success}")
 
         self.dist_cube_cam_minimal = torch.where(
@@ -629,13 +659,15 @@ class HawUr5Env(DirectRLEnv):
         obs = torch.cat(
             (
                 self.live_joint_pos[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
-                self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
+                # self.live_joint_vel[:, : len(self._arm_dof_idx)].unsqueeze(
+                #     dim=1
+                # ),  #! remove when needed
                 self.live_joint_torque[:, : len(self._arm_dof_idx)].unsqueeze(dim=1),
                 self.gripper_steps.unsqueeze(dim=1).unsqueeze(dim=1),
                 cube_pos_w.unsqueeze(dim=1),
-                self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
-                    dim=1
-                ),  #! Not informative
+                # self.cube_distance_to_goal.unsqueeze(dim=1).unsqueeze(
+                #     dim=1
+                # ),  #! Not informative
                 self.data_age.unsqueeze(dim=1).unsqueeze(dim=1),
                 self.dist_cube_cam.unsqueeze(dim=1).unsqueeze(dim=1),
                 pos_sensor.unsqueeze(dim=1),
@@ -679,6 +711,7 @@ class HawUr5Env(DirectRLEnv):
             "policy": obs,
             "grasp_success": self.grasp_success,
             "mean_torque": self.mean_torque,
+            "torque_limit_exeeded": self.torque_limit_exeeded,
         }
         return observations
 
@@ -725,11 +758,7 @@ class HawUr5Env(DirectRLEnv):
             )
 
         # position reached
-        self.goal_reached = torch.where(
-            self.cube_distance_to_goal.squeeze() < 0.05,
-            torch.tensor(1, device=self.device),
-            torch.tensor(0, device=self.device),
-        )
+        self.goal_reached, self.partial_grasp = self.check_grasp_success()
 
         # Resolves the issue of the goal_reached tensor becoming a scalar when the number of environments is 1
         if self.cfg.scene.num_envs == 1:
@@ -801,6 +830,8 @@ class HawUr5Env(DirectRLEnv):
 
                 root_pose = torch.cat((root_pos, root_quat), dim=1)
                 self.robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+
+        # joint_pos[env_ids, 5] = 0.0
 
         joint_vel = torch.zeros_like(self.robot.data.default_joint_vel[env_ids])
 
@@ -926,6 +957,8 @@ class HawUr5Env(DirectRLEnv):
             self.cube_z_new,
             self.grasp_success,
             self.cfg.pickup_reward_scaling,
+            self.partial_grasp,
+            self.cfg.partial_grasp_reward_scaling,
         )
 
         # self.total_penalty_alive += rewards[0]
@@ -1001,6 +1034,8 @@ def compute_rewards(
     cube_z: torch.Tensor,
     grasp_success: torch.Tensor,
     pickup_reward_scaling: float,
+    partial_grasp: torch.Tensor,
+    partial_grasp_reward_scaling: float,
 ) -> torch.Tensor:
 
     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
@@ -1032,57 +1067,47 @@ def compute_rewards(
     torque_limit_exeeded_penalty = (
         torque_limit_exceeded_penalty_scaling * torque_limit_exceeded
     )
-
-    goal_reached_reward = goal_reached_scaling * goal_reached
-
-    # pickup_reward = torch.where(
-    #     cube_z > 0.6,
-    #     torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
-    #     torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
-    # )
-
     pickup_reward = torch.where(
-        grasp_success == True,
+        (grasp_success == True) & (dist_cube_cam > 0.16),
         torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
         torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
     )
 
+    partial_grasp_reward = torch.where(
+        (partial_grasp == True) & (dist_cube_cam > 0.16) & (grasp_success == False),
+        torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
+        torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
+    )
+
+    partial_grasp_reward = partial_grasp_reward * partial_grasp_reward_scaling
+
     pickup_reward = pickup_reward * pickup_reward_scaling
 
     open_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.18) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
+        (dist_cube_cam > 0.22) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
         torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
     close_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.18) & (gripper_action_bin > 0),
-        torch.tensor(0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        (dist_cube_cam > 0.18) & (dist_cube_cam < 0.22) & (gripper_action_bin > 0),
+        torch.tensor(0.01, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
-    pickup_reward += open_gripper_incentive + close_gripper_incentive
-
-    # Option 1 for approach reward: Minimal distance to cube is stored and improvment rewarded
-    # improvement = dist_cube_cam_minimal - dist_cube_cam
-    # improvement_reward = torch.clamp(improvement, min=0.0) * approach_reward_scaling
-    # approach_reward = torch.where(
-    #     dist_cube_cam > 0,  # only give reward if the cube is in sight
-    #     improvement_reward,  # Reward inversely proportional to distance
-    #     torch.tensor(
-    #         0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device
-    #     ),  # No reward if cube is not in sight
+    # pickup_reward += (
+    #     open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
     # )
 
-    # Option 2 for approach reward: Exponential decay of reward with distance
-    dist_cube_cam = torch.where(
-        (dist_cube_cam > 0.0) & (dist_cube_cam < 0.2),
-        torch.tensor(0.2, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-        dist_cube_cam,
-    )
+    # Exponential decay of reward with distance
+    # dist_cube_cam = torch.where(
+    #     (dist_cube_cam > 0.0) & (dist_cube_cam < 0.2),
+    #     torch.tensor(0.2, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    #     dist_cube_cam,
+    # )
     k = 5
     approach_reward = torch.where(
-        (dist_cube_cam > 0.0) & (data_age < 3.0),
+        (dist_cube_cam > 0.2) & (data_age < 3.0),
         approach_reward_scaling * torch.exp(-k * dist_cube_cam),
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
