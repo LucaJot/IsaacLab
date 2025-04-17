@@ -425,7 +425,7 @@ def main():
     resume = True
     start_cl = 3
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 30  #  28
+    NUM_ENVS = 20  #  28
     ACTION_SCALE_REAL = 0.1
     RANDOMIZE = True
 
@@ -455,8 +455,8 @@ def main():
             _,
             _,
         ) = rg_node.get_obs_from_real_world()
-        # Shift cube pos to the correct height
-        #!cube_pos[2] += 0.2
+        # Shift cube pos height to avoid collision
+        # cube_pos[2] -= 0.2
         # Store joint angles
         real_joint_angles = real_joint_info["joint_positions"]  # type: ignore
 
@@ -478,7 +478,7 @@ def main():
     if use_real_hw:
         env_cfg.action_scale = ACTION_SCALE_REAL * 2  # type: ignore # * 2 to increase overall execution speed
         env_cfg.CL_state = 1  # type: ignore
-        env_cfg.episode_length_s = 90000
+        env_cfg.episode_length_s = 90000  # was 90000
 
     # Create digital twin with the real-world state
     env = gym.make(
@@ -606,14 +606,14 @@ def main():
     if success:
         print("Task solved in Sim!")
         print("Moving network control to real robot...")
+        interrupt = False
 
-        while not rg_node.goal_reached():
-            obs = rg_node.step_real(
+        while not rg_node.goal_reached() and not interrupt:
+            obs, interrupt = rg_node.step_real(
                 policy,
-                action_scale=ACTION_SCALE_REAL * 0.5,
+                action_scale=ACTION_SCALE_REAL * 0.3,
             )
             print(f"Observations: {obs}")
-            # TODO Interrupts catchen
 
     elif interrupt:
         # get interrupt state
@@ -622,7 +622,7 @@ def main():
 
         arm_interrupt_state = obs[0][0:6].cpu().numpy()
         gripper_interrupt_state = obs[0][18].cpu().numpy()
-        env_cfg.arm_joints_init_state = arm_interrupt_state  #! Das funktioniert nicht
+        env_cfg.arm_joints_init_state = arm_interrupt_state
         # agent_cfg.experiment_name = EXPERIMENT_NAME
 
         train_rsl_rl_agent(env, env_cfg, agent_cfg, resume)

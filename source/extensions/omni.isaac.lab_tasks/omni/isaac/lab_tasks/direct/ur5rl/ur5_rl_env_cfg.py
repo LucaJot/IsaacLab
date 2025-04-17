@@ -87,7 +87,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     f_update = 120
     observation_space = 27
     state_space = 0
-    episode_length_s = 12  # was 15
+    episode_length_s = 10  # was 15
 
     arm_joints_init_state: list[float] = [0.0, -1.92, 2.3, -3.14, -1.57, 0.0]
 
@@ -96,13 +96,13 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     alive_reward_scaling = +0.01
     terminated_penalty_scaling = 0.0
     vel_penalty_scaling = -0.00
-    torque_penalty_scaling = -0.0008
+    torque_penalty_scaling = -0.0006
     torque_limit_exeeded_penalty_scaling = -0.5
     cube_out_of_sight_penalty_scaling = -0.0003
     distance_cube_to_goal_penalty_scaling = -0.01
     goal_reached_scaling = 10.0
     approach_reward = 0.03
-    pickup_reward_scaling = 2.0  # 0.03  #! was 0.2
+    pickup_reward_scaling = 5.0  # 0.03  #! was 0.2
     partial_grasp_reward_scaling = 0.1
     torque_limit = 500  # was 500.0
 
@@ -171,7 +171,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     cuboid_cfg = sim_utils.CuboidCfg(
         size=(0.05, 0.05, 0.05),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            rigid_body_enabled=True, kinematic_enabled=True
+            rigid_body_enabled=True, kinematic_enabled=False
         ),
         mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
         collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
@@ -211,18 +211,18 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         debug_vis=True,
     )
 
-    contact_sensor = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor_automatic",
-        update_period=0.0,
-        history_length=6,
-        debug_vis=True,
-        filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
-    )
+    # contact_sensor = ContactSensorCfg(
+    #     prim_path="{ENV_REGEX_NS}/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor_automatic",
+    #     update_period=0.0,
+    #     history_length=6,
+    #     debug_vis=True,
+    #     filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
+    # )
 
     # robot
     robot_cfg: ArticulationCfg = ArticulationCfg(
         spawn=sim_utils.UsdFileCfg(
-            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper.usd"
+            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper_col.usd"
         ),
         prim_path="/World/envs/env_.*/ur5",
         actuators={

@@ -56,8 +56,8 @@ from omni.isaac.lab.utils.noise.noise_cfg import (
 )
 
 from ur5_rl_env_cfg import HawUr5EnvCfg
-from pxr import PhysxSchema
-from omni.physx.scripts import utils
+from pxr import UsdPhysics
+from omni.isaac.core.utils.prims import get_prim_at_path
 
 
 # init pos close to the cube
@@ -455,10 +455,10 @@ class HawUr5Env(DirectRLEnv):
         if not torch.allclose(
             current_main_joint_positions, current_main_joint_positions_sim, atol=0.1
         ):
-            if self.cfg.verbose_logging:
-                print(
-                    f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
-                )
+            # if self.cfg.verbose_logging:
+            #     print(
+            #         f"[INFO]: Joint position GT in script deviates too much from the simulation\nUpdate GT"
+            #     )
             self.jointpos_script_GT = current_main_joint_positions_sim.clone()
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
@@ -519,8 +519,8 @@ class HawUr5Env(DirectRLEnv):
 
         for i in range(self.scene.num_envs):
             # Resolve contact sensor paths for this env
-            path_L = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/left_inner_finger/Contact_Sensor"
-            path_R = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/right_inner_finger/Contact_Sensor"
+            path_L = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/left_inner_finger/collisions/contact_plate/Contact_Sensor"
+            path_R = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/right_inner_finger/collisions/contact_plate/Contact_Sensor"
             path_C = f"/World/envs/env_{i}/Cube/Cube/Contact_Sensor"
 
             # Read sensor states
@@ -548,11 +548,11 @@ class HawUr5Env(DirectRLEnv):
                 Sensor_L.in_contact
                 and Sensor_R.in_contact
                 and Sensor_Cube.in_contact
-                and raw_data_L
-                and raw_data_R
-                and raw_data_C
-                and raw_data_L[0][3] == raw_data_C[0][2]
-                and raw_data_R[0][3] == raw_data_C[0][2]
+                # and raw_data_L
+                # and raw_data_R
+                # and raw_data_C
+                # and raw_data_L[0][3] == raw_data_C[0][2]
+                # and raw_data_R[0][3] == raw_data_C[0][2]
                 and self.dist_cube_cam[i].item() > 0.15
             ):
                 success_flags.append(True)
@@ -562,16 +562,16 @@ class HawUr5Env(DirectRLEnv):
             elif (
                 Sensor_L.in_contact
                 and Sensor_Cube.in_contact
-                and raw_data_L
-                and raw_data_C
-                and raw_data_L[0][3] == raw_data_C[0][2]
+                # and raw_data_L
+                # and raw_data_C
+                # and raw_data_L[0][3] == raw_data_C[0][2]
                 and self.dist_cube_cam[i].item() > 0.15
             ) or (
                 Sensor_R.in_contact
                 and Sensor_Cube.in_contact
-                and raw_data_R
-                and raw_data_C
-                and raw_data_R[0][3] == raw_data_C[0][2]
+                # and raw_data_R
+                # and raw_data_C
+                # and raw_data_R[0][3] == raw_data_C[0][2]
                 and self.dist_cube_cam[i].item() > 0.15
             ):
                 print(f"Env {i}: Partial grasp")
@@ -619,7 +619,7 @@ class HawUr5Env(DirectRLEnv):
                 base_link_poses=self.scene.articulations["ur5"]
                 .data.root_pos_w.cpu()
                 .numpy(),
-                CAMERA_RGB_2_D_OFFSET=-25,
+                CAMERA_RGB_2_D_OFFSET=0,
             )
         )
         cube_pos = torch.from_numpy(cube_pos).to(self.device)
@@ -805,8 +805,7 @@ class HawUr5Env(DirectRLEnv):
         super()._reset_idx(env_ids)  # type: ignore
 
         joint_pos = self.robot.data.default_joint_pos[env_ids]
-        # Domain randomization (TODO make sure states are safe)
-        #! TODO ENABLE RANDOMIZATION
+        # Domain randomization
         if self.randomize:
             randomness = (
                 torch.rand_like(joint_pos) * 2 - 1
@@ -1060,6 +1059,7 @@ def compute_rewards(
     exceeded_percentage = torch.clip(
         torch.div(torque_limit_exceedamount, remaining_torque), min=0.0, max=1.0
     )
+
     torque_penalty = torque_penalty_scaling * exceeded_percentage
 
     total_torque_penalty = torch.sum(torque_penalty, dim=-1)
@@ -1095,9 +1095,9 @@ def compute_rewards(
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
-    # pickup_reward += (
-    #     open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
-    # )
+    pickup_reward += (
+        open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
+    )
 
     # Exponential decay of reward with distance
     # dist_cube_cam = torch.where(

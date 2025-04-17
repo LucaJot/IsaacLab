@@ -75,6 +75,9 @@ class Ur5JointController(Node):
 
         # Set update rate for the joint command
         self.update_timer = self.create_timer(self.d_t, self.send_joint_command)
+        self.gripper_periodic_timer = self.create_timer(
+            10.0, self.update_gripper_state_periodic
+        )
 
         # Gripper init
         self.cli = self.create_client(SetIO, "/io_and_status_controller/set_io")
@@ -222,6 +225,12 @@ class Ur5JointController(Node):
             self.forward_pos_pub.publish(new_target_msg)
             self.current_angle_delta = [np.float64(0.0)] * 6
             self.joint_positions_GT = new_target
+
+    def update_gripper_state_periodic(self):
+        """_summary_
+        Function to update the gripper state periodically.
+        """
+        self.set_gripper(self.gripper_target)  # type: ignore
 
     def set_gripper(self, state: bool):
         req = SetIO.Request()

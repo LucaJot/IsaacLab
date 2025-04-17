@@ -93,6 +93,7 @@ class ros_to_gym:
         cube_pos_cpu, data_age_cpu, z_cpu, pos_sensor_cpu = (
             self.get_current_cube_pos_from_real_robot()
         )
+        cube_pos_cpu[0][2] += 0.1  #! Add offset to z axis
         cube_pos = torch.from_numpy(cube_pos_cpu).to("cuda:0")
         data_age = torch.tensor(data_age_cpu).to("cuda:0")
         z = torch.tensor(z_cpu).to("cuda:0")
@@ -168,26 +169,43 @@ class ros_to_gym:
 
     def step_real(self, policy, action_scale=1.0):
         """Play with RSL-RL agent in real world."""
+        interrupt = False
         # Get the current joint positions from the real robot
         obs, _ = self.get_obs_from_real_world()
         action = policy(obs)
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
         action = action * action_scale
         action = action.squeeze(dim=0).squeeze(dim=0)
-        print(f"Action: {action}")
-        print(f"Observations: {obs}")
+        action[5] = 0.0  # wrist3 lock
         # Execute the action on the real robot
         self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
-        return obs
+
+        obs, _ = self.get_obs_from_real_world()
+        torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
+        # Check if the first 3 torques are > 95 or the last 3 torques are > 20
+        if np.any(torques > 95) or np.any(torques[3:] > 20):
+            print(f"Torques: {torques}")
+            print("[INFO]: Torques are too high, stopping the robot.")
+            interrupt = True
+        return (obs, interrupt)
 
     def step_real_with_action(self, action, action_scale=0.08):
         """Apply action command to the real world."""
+        interrupt = False
         action = torch.tanh(action)  # (make sure it is in the range [-1, 1])
         action = action * action_scale
         action = action.squeeze(dim=0)
         # print(f"Action: {action}")
         # Execute the action on the real robot
         self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
+        obs, _ = self.get_obs_from_real_world()
+        torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
+        # Check if the first 3 torques are > 95 or the last 3 torques are > 20
+        if np.any(torques > 90) or np.any(torques[3:] > 20):
+            print(f"Torques: {torques}")
+            print("[INFO]: Torques are too high, stopping the robot.")
+            interrupt = True
+        return (obs, interrupt)
 
     def goal_reached(self, threshold=0.05):
         """Check if the goal is reached."""
