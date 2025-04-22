@@ -140,7 +140,7 @@ class ContactSensor(SensorBase):
         if env_ids is None:
             env_ids = slice(None)
         # reset accumulative data buffers
-        self._data.net_forces_w[env_ids] = 0.0
+        # self._data.net_forces_w[env_ids] = 0.0
         self._data.net_forces_w_history[env_ids] = 0.0
         if self.cfg.history_length > 0:
             self._data.net_forces_w_history[env_ids] = 0.0
@@ -154,7 +154,9 @@ class ContactSensor(SensorBase):
             self._data.current_contact_time[env_ids] = 0.0
             self._data.last_contact_time[env_ids] = 0.0
 
-    def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False) -> tuple[list[int], list[str]]:
+    def find_bodies(
+        self, name_keys: str | Sequence[str], preserve_order: bool = False
+    ) -> tuple[list[int], list[str]]:
         """Find bodies in the articulation based on the name keys.
 
         Args:
@@ -164,7 +166,9 @@ class ContactSensor(SensorBase):
         Returns:
             A tuple of lists containing the body indices and names.
         """
-        return string_utils.resolve_matching_names(name_keys, self.body_names, preserve_order)
+        return string_utils.resolve_matching_names(
+            name_keys, self.body_names, preserve_order
+        )
 
     def compute_first_contact(self, dt: float, abs_tol: float = 1.0e-8) -> torch.Tensor:
         """Checks if bodies that have established contact within the last :attr:`dt` seconds.
@@ -250,7 +254,9 @@ class ContactSensor(SensorBase):
         leaf_pattern = self.cfg.prim_path.rsplit("/", 1)[-1]
         template_prim_path = self._parent_prims[0].GetPath().pathString
         body_names = list()
-        for prim in sim_utils.find_matching_prims(template_prim_path + "/" + leaf_pattern):
+        for prim in sim_utils.find_matching_prims(
+            template_prim_path + "/" + leaf_pattern
+        ):
             # check if prim has contact reporter API
             if prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
                 prim_path = prim.GetPath().pathString
@@ -267,10 +273,14 @@ class ContactSensor(SensorBase):
         body_names_regex = f"{self.cfg.prim_path.rsplit('/', 1)[0]}/{body_names_regex}"
         # convert regex expressions to glob expressions for PhysX
         body_names_glob = body_names_regex.replace(".*", "*")
-        filter_prim_paths_glob = [expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr]
+        filter_prim_paths_glob = [
+            expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr
+        ]
 
         # create a rigid prim view for the sensor
-        self._body_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_glob)
+        self._body_physx_view = self._physics_sim_view.create_rigid_body_view(
+            body_names_glob
+        )
         self._contact_physx_view = self._physics_sim_view.create_rigid_contact_view(
             body_names_glob, filter_patterns=filter_prim_paths_glob
         )
@@ -285,25 +295,43 @@ class ContactSensor(SensorBase):
             )
 
         # prepare data buffers
-        self._data.net_forces_w = torch.zeros(self._num_envs, self._num_bodies, 3, device=self._device)
+        self._data.net_forces_w = torch.zeros(
+            self._num_envs, self._num_bodies, 3, device=self._device
+        )
         # optional buffers
         # -- history of net forces
         if self.cfg.history_length > 0:
             self._data.net_forces_w_history = torch.zeros(
-                self._num_envs, self.cfg.history_length, self._num_bodies, 3, device=self._device
+                self._num_envs,
+                self.cfg.history_length,
+                self._num_bodies,
+                3,
+                device=self._device,
             )
         else:
             self._data.net_forces_w_history = self._data.net_forces_w.unsqueeze(1)
         # -- pose of sensor origins
         if self.cfg.track_pose:
-            self._data.pos_w = torch.zeros(self._num_envs, self._num_bodies, 3, device=self._device)
-            self._data.quat_w = torch.zeros(self._num_envs, self._num_bodies, 4, device=self._device)
+            self._data.pos_w = torch.zeros(
+                self._num_envs, self._num_bodies, 3, device=self._device
+            )
+            self._data.quat_w = torch.zeros(
+                self._num_envs, self._num_bodies, 4, device=self._device
+            )
         # -- air/contact time between contacts
         if self.cfg.track_air_time:
-            self._data.last_air_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
-            self._data.current_air_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
-            self._data.last_contact_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
-            self._data.current_contact_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
+            self._data.last_air_time = torch.zeros(
+                self._num_envs, self._num_bodies, device=self._device
+            )
+            self._data.current_air_time = torch.zeros(
+                self._num_envs, self._num_bodies, device=self._device
+            )
+            self._data.last_contact_time = torch.zeros(
+                self._num_envs, self._num_bodies, device=self._device
+            )
+            self._data.current_contact_time = torch.zeros(
+                self._num_envs, self._num_bodies, device=self._device
+            )
         # force matrix: (num_envs, num_bodies, num_filter_shapes, 3)
         if len(self.cfg.filter_prim_paths_expr) != 0:
             num_filters = self.contact_physx_view.filter_count
@@ -320,37 +348,58 @@ class ContactSensor(SensorBase):
         # obtain the contact forces
         # TODO: We are handling the indexing ourself because of the shape; (N, B) vs expected (N * B).
         #   This isn't the most efficient way to do this, but it's the easiest to implement.
-        net_forces_w = self.contact_physx_view.get_net_contact_forces(dt=self._sim_physics_dt)
-        self._data.net_forces_w[env_ids, :, :] = net_forces_w.view(-1, self._num_bodies, 3)[env_ids]
+        net_forces_w = self.contact_physx_view.get_net_contact_forces(
+            dt=self._sim_physics_dt
+        )
+        self._data.net_forces_w[env_ids, :, :] = net_forces_w.view(
+            -1, self._num_bodies, 3
+        )[env_ids]
         # update contact force history
         if self.cfg.history_length > 0:
-            self._data.net_forces_w_history[env_ids, 1:] = self._data.net_forces_w_history[env_ids, :-1].clone()
-            self._data.net_forces_w_history[env_ids, 0] = self._data.net_forces_w[env_ids]
+            self._data.net_forces_w_history[env_ids, 1:] = (
+                self._data.net_forces_w_history[env_ids, :-1].clone()
+            )
+            self._data.net_forces_w_history[env_ids, 0] = self._data.net_forces_w[
+                env_ids
+            ]
 
         # obtain the contact force matrix
         if len(self.cfg.filter_prim_paths_expr) != 0:
             # shape of the filtering matrix: (num_envs, num_bodies, num_filter_shapes, 3)
             num_filters = self.contact_physx_view.filter_count
             # acquire and shape the force matrix
-            force_matrix_w = self.contact_physx_view.get_contact_force_matrix(dt=self._sim_physics_dt)
+            force_matrix_w = self.contact_physx_view.get_contact_force_matrix(
+                dt=self._sim_physics_dt
+            )
             force_matrix_w = force_matrix_w.view(-1, self._num_bodies, num_filters, 3)
             self._data.force_matrix_w[env_ids] = force_matrix_w[env_ids]
 
         # obtain the pose of the sensor origin
         if self.cfg.track_pose:
-            pose = self.body_physx_view.get_transforms().view(-1, self._num_bodies, 7)[env_ids]
+            pose = self.body_physx_view.get_transforms().view(-1, self._num_bodies, 7)[
+                env_ids
+            ]
             pose[..., 3:] = convert_quat(pose[..., 3:], to="wxyz")
-            self._data.pos_w[env_ids], self._data.quat_w[env_ids] = pose.split([3, 4], dim=-1)
+            self._data.pos_w[env_ids], self._data.quat_w[env_ids] = pose.split(
+                [3, 4], dim=-1
+            )
 
         # obtain the air time
         if self.cfg.track_air_time:
             # -- time elapsed since last update
             # since this function is called every frame, we can use the difference to get the elapsed time
-            elapsed_time = self._timestamp[env_ids] - self._timestamp_last_update[env_ids]
+            elapsed_time = (
+                self._timestamp[env_ids] - self._timestamp_last_update[env_ids]
+            )
             # -- check contact state of bodies
-            is_contact = torch.norm(self._data.net_forces_w[env_ids, :, :], dim=-1) > self.cfg.force_threshold
+            is_contact = (
+                torch.norm(self._data.net_forces_w[env_ids, :, :], dim=-1)
+                > self.cfg.force_threshold
+            )
             is_first_contact = (self._data.current_air_time[env_ids] > 0) * is_contact
-            is_first_detached = (self._data.current_contact_time[env_ids] > 0) * ~is_contact
+            is_first_detached = (
+                self._data.current_contact_time[env_ids] > 0
+            ) * ~is_contact
             # -- update the last contact time if body has just become in contact
             self._data.last_air_time[env_ids] = torch.where(
                 is_first_contact,
@@ -359,7 +408,9 @@ class ContactSensor(SensorBase):
             )
             # -- increment time for bodies that are not in contact
             self._data.current_air_time[env_ids] = torch.where(
-                ~is_contact, self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
+                ~is_contact,
+                self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1),
+                0.0,
             )
             # -- update the last contact time if body has just detached
             self._data.last_contact_time[env_ids] = torch.where(
@@ -369,7 +420,9 @@ class ContactSensor(SensorBase):
             )
             # -- increment time for bodies that are in contact
             self._data.current_contact_time[env_ids] = torch.where(
-                is_contact, self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
+                is_contact,
+                self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1),
+                0.0,
             )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
@@ -393,7 +446,9 @@ class ContactSensor(SensorBase):
         # marker indices
         # 0: contact, 1: no contact
         net_contact_force_w = torch.norm(self._data.net_forces_w, dim=-1)
-        marker_indices = torch.where(net_contact_force_w > self.cfg.force_threshold, 0, 1)
+        marker_indices = torch.where(
+            net_contact_force_w > self.cfg.force_threshold, 0, 1
+        )
         # check if prim is visualized
         if self.cfg.track_pose:
             frame_origins: torch.Tensor = self._data.pos_w
@@ -401,7 +456,9 @@ class ContactSensor(SensorBase):
             pose = self.body_physx_view.get_transforms()
             frame_origins = pose.view(-1, self._num_bodies, 7)[:, :, :3]
         # visualize
-        self.contact_visualizer.visualize(frame_origins.view(-1, 3), marker_indices=marker_indices.view(-1))
+        self.contact_visualizer.visualize(
+            frame_origins.view(-1, 3), marker_indices=marker_indices.view(-1)
+        )
 
     """
     Internal simulation callbacks.

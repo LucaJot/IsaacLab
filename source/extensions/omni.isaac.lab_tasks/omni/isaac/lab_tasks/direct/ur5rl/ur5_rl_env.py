@@ -187,6 +187,9 @@ class HawUr5Env(DirectRLEnv):
 
         self.grasp_success = torch.zeros(self.scene.num_envs, device=self.device)
         self.partial_grasp = torch.zeros(self.scene.num_envs, device=self.device)
+        self.container_contact = torch.zeros(
+            self.scene.num_envs, device=self.device, dtype=torch.bool
+        )
 
         # Yolo model for cube detection
         # self.yolov11 = YOLO("yolo11s.pt")
@@ -338,7 +341,6 @@ class HawUr5Env(DirectRLEnv):
             #     translation=cube_pos,
             # )
 
-            # self.cube = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg)
             self.cube = spawn_from_usd(
                 prim_path="/World/envs/env_.*/Cube",
                 cfg=self.cfg.cube_usd_cfg,
@@ -358,6 +360,15 @@ class HawUr5Env(DirectRLEnv):
         self.scene.sensors["camera_rgb"] = self.camera_rgb
         self.camera_depth = Camera(cfg=self.cfg.camera_depth_cfg)
         self.scene.sensors["camera_depth"] = self.camera_depth
+
+        self.contact_l = ContactSensor(cfg=self.cfg.contact_cfg_l)
+        self.scene.sensors["contact_l"] = self.contact_l
+        self.contact_r = ContactSensor(cfg=self.cfg.contact_cfg_r)
+        self.scene.sensors["contact_r"] = self.contact_r
+        self.contact_c = ContactSensor(cfg=self.cfg.contact_cfg_c)
+        self.scene.sensors["contact_c"] = self.contact_c
+        self.contact_t = ContactSensor(cfg=self.cfg.contact_cfg_t)
+        self.scene.sensors["contact_t"] = self.contact_t
 
         self._contact_sensor_interface = _sensor.acquire_contact_sensor_interface()
 
@@ -517,79 +528,69 @@ class HawUr5Env(DirectRLEnv):
         success_flags = []
         partial_grasp_flags = []
 
-        for i in range(self.scene.num_envs):
-            # Resolve contact sensor paths for this env
-            path_L = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/left_inner_finger/collisions/contact_plate/Contact_Sensor"
-            path_R = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/right_inner_finger/collisions/contact_plate/Contact_Sensor"
-            path_C = f"/World/envs/env_{i}/Cube/Cube/Contact_Sensor"
-
-            # Read sensor states
-            Sensor_L = self._contact_sensor_interface.get_sensor_reading(
-                path_L, use_latest_data=True
-            )
-            Sensor_R = self._contact_sensor_interface.get_sensor_reading(
-                path_R, use_latest_data=True
-            )
-            Sensor_Cube = self._contact_sensor_interface.get_sensor_reading(path_C)
-
-            # Read raw contact data (includes contact info like IDs)
-            raw_data_L = self._contact_sensor_interface.get_contact_sensor_raw_data(
-                path_L
-            )
-            raw_data_R = self._contact_sensor_interface.get_contact_sensor_raw_data(
-                path_R
-            )
-            raw_data_C = self._contact_sensor_interface.get_contact_sensor_raw_data(
-                path_C
-            )
-
-            # Logic: All must be in contact AND contact must be with each other
-            if (
-                Sensor_L.in_contact
-                and Sensor_R.in_contact
-                and Sensor_Cube.in_contact
-                # and raw_data_L
-                # and raw_data_R
-                # and raw_data_C
-                # and raw_data_L[0][3] == raw_data_C[0][2]
-                # and raw_data_R[0][3] == raw_data_C[0][2]
-                and self.dist_cube_cam[i].item() > 0.15
-            ):
-                success_flags.append(True)
-                partial_grasp_flags.append(False)
-                print(f"Env {i}: Grasp success")
-
-            elif (
-                Sensor_L.in_contact
-                and Sensor_Cube.in_contact
-                # and raw_data_L
-                # and raw_data_C
-                # and raw_data_L[0][3] == raw_data_C[0][2]
-                and self.dist_cube_cam[i].item() > 0.15
-            ) or (
-                Sensor_R.in_contact
-                and Sensor_Cube.in_contact
-                # and raw_data_R
-                # and raw_data_C
-                # and raw_data_R[0][3] == raw_data_C[0][2]
-                and self.dist_cube_cam[i].item() > 0.15
-            ):
-                print(f"Env {i}: Partial grasp")
-                partial_grasp_flags.append(True)
-                success_flags.append(False)
-            else:
-                success_flags.append(False)
-                partial_grasp_flags.append(False)
-
-        # Convert to torch tensor
-        return (
-            torch.tensor(success_flags, device=self.device),
-            torch.tensor(partial_grasp_flags, device=self.device),
+        self.contact_l._update_outdated_buffers()
+        left_contact = self.contact_l.compute_first_contact(self.cfg.f_update).squeeze(
+            -1
         )
+        self.contact_r._update_outdated_buffers()
+        right_contact = self.contact_r.compute_first_contact(self.cfg.f_update).squeeze(
+            -1
+        )
+        self.contact_c._update_outdated_buffers()
+        cube_contact = self.contact_c.compute_first_contact(self.cfg.f_update).squeeze(
+            -1
+        )
+        self.contact_t._update_outdated_buffers()
+        container_contact = self.contact_t.compute_first_contact(
+            self.cfg.f_update
+        ).squeeze(-1)
+        self.container_contact = container_contact
+
+        # Grasp success
+        grasp_success = (
+            left_contact
+            & right_contact
+            & cube_contact
+            & ~container_contact
+            & (self.dist_cube_cam > 0.16)
+            & (self.data_age < 3.0)
+        )
+
+        partial_grasp_success = (
+            left_contact
+            & cube_contact
+            & ~right_contact
+            & ~container_contact
+            & (self.dist_cube_cam > 0.16)
+            & (self.data_age < 3.0)
+        ) | (
+            right_contact
+            & cube_contact
+            & ~left_contact
+            & ~container_contact
+            & (self.dist_cube_cam > 0.16)
+            & (self.data_age < 3.0)
+        )
+
+        if torch.any(grasp_success):
+            grasp_idx = torch.where(grasp_success)[0]
+            print(f"Grasp success in envs: {grasp_idx}")
+
+        if torch.any(partial_grasp_success):
+            grasp_idx = torch.where(partial_grasp_success)[0]
+            print(f"Partial grasp in envs: {grasp_idx}")
+
+        grasp_success = grasp_success.squeeze(-1)
+        partial_grasp_success = partial_grasp_success.squeeze(-1)
+
+        return (grasp_success, partial_grasp_success)
 
     def _get_observations(self) -> dict:
 
         self.grasp_success, self.partial_grasp = self.check_grasp_success()
+
+        if self.grasp_success.any():
+            pass
         # print(f"Grasp success: {self.grasp_success}")
 
         self.dist_cube_cam_minimal = torch.where(
@@ -757,13 +758,14 @@ class HawUr5Env(DirectRLEnv):
                 self.num_envs, dtype=torch.bool, device=self.device
             )
 
-        # position reached
-        self.goal_reached, self.partial_grasp = self.check_grasp_success()
+        if torch.any(self.torque_limit_exeeded):
+            idx = torch.where(self.torque_limit_exeeded)[0]
+            print(f"Torque limit exeeded in envs: {idx}")
 
         # Resolves the issue of the goal_reached tensor becoming a scalar when the number of environments is 1
         if self.cfg.scene.num_envs == 1:
-            self.goal_reached = self.goal_reached.unsqueeze(0)
-        reset_terminated = self.goal_reached | self.torque_limit_exeeded
+            self.grasp_success = self.grasp_success.unsqueeze(0)
+        reset_terminated = self.grasp_success | self.torque_limit_exeeded
         return reset_terminated, time_out
 
     def _randomize_object_positions(self, env_id):
@@ -958,6 +960,8 @@ class HawUr5Env(DirectRLEnv):
             self.cfg.pickup_reward_scaling,
             self.partial_grasp,
             self.cfg.partial_grasp_reward_scaling,
+            self.container_contact,
+            self.cfg.container_contact_penalty_scaling,
         )
 
         # self.total_penalty_alive += rewards[0]
@@ -1035,6 +1039,8 @@ def compute_rewards(
     pickup_reward_scaling: float,
     partial_grasp: torch.Tensor,
     partial_grasp_reward_scaling: float,
+    container_contact: torch.Tensor,
+    container_contact_penalty_scaling: float,
 ) -> torch.Tensor:
 
     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
@@ -1095,9 +1101,21 @@ def compute_rewards(
         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
     )
 
+    # Container contact penalty
+    container_contact_penalty_t = torch.where(
+        container_contact,
+        torch.tensor(1.0, device=container_contact.device),
+        torch.tensor(0.0, device=container_contact.device),
+    )
+    container_contact_penalty = (
+        container_contact_penalty_scaling * container_contact_penalty_t
+    )
+
     pickup_reward += (
         open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
     )
+
+    pickup_reward -= container_contact_penalty
 
     # Exponential decay of reward with distance
     # dist_cube_cam = torch.where(

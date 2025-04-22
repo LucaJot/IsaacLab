@@ -414,20 +414,97 @@ def extract_learning_metrics(log_results):
     return metrics
 
 
+def train_CL_agent(
+    env: RslRlVecEnvWrapper,
+    curriculum_thresholds,
+    env_cfg,
+    agent_cfg,
+    start_cl=3,
+    resume=False,
+):
+
+    # Plateau detection parameters
+    plateau_window = 3  # how many recent rewards to track (100 episodes each return)
+    plateau_tolerance = 0.01  # min improvement needed to continue
+
+    max_iters_per_cl = 20  # Each iter runs for 100 episodes = 2000 steps per cl
+
+    max_cl = max(curriculum_thresholds.keys())
+
+    env.unwrapped.set_train_mode()
+    current_cl = start_cl
+
+    while current_cl <= max_cl:
+        recent_rewards = []  # reset reward history per CL
+
+        for local_iter in range(max_iters_per_cl):
+            print(
+                f"\n🎯 Training at Curriculum Level CL{current_cl} (Iteration {local_iter})"
+            )
+
+            # Run training iteration
+            log_results = train_rsl_rl_agent_init(
+                env, env_cfg, agent_cfg, CL=current_cl, resume=resume
+            )
+
+            # Extract metrics and save
+            log_results_ser = extract_learning_metrics(log_results)
+            log_path = f"/home/luca/isaaclab_ws/IsaacLab/source/standalone/ur5rl/pretrain_CL{current_cl}_iter{local_iter}.json"
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, "w") as f:
+                json.dump(log_results_ser, f, indent=4)
+
+            print(json.dumps(log_results_ser, indent=2))
+
+            # Check reward
+            mean_rew = log_results_ser.get("mean_reward_per_episode_rsl", 0.0)
+
+            # Update recent rewards for plateau detection
+            recent_rewards.append(mean_rew)
+            if len(recent_rewards) > plateau_window:
+                recent_rewards.pop(0)
+
+            # Condition 1: Threshold passed
+            if mean_rew >= curriculum_thresholds[current_cl]:
+                print(
+                    f"✅ Reward {mean_rew:.4f} passed threshold {curriculum_thresholds[current_cl]} — moving to CL{current_cl + 1}"
+                )
+                current_cl += 1
+                break
+
+            # Condition 2: Plateau detected
+            if len(recent_rewards) == plateau_window:
+                improvement = recent_rewards[-1] - recent_rewards[0]
+                if improvement < plateau_tolerance:
+                    print(
+                        f"📉 Plateau detected (Δreward={improvement:.4f} < {plateau_tolerance}) — moving to CL{current_cl + 1}"
+                    )
+                    current_cl += 1
+                    break
+
+            resume = True
+
+        else:
+            print(
+                f"⚠️ Max iterations reached for CL{current_cl}, moving to next CL level."
+            )
+            current_cl += 1
+
+
 def main():
     """Main function."""
 
     # Get init state from real hw or stored state
     use_real_hw = False
     # Pretrain the model
-    pretrain = True
+    pretrain = False
     # Resume the last training
     resume = True
     start_cl = 3
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 20  #  28
+    NUM_ENVS = 1  #  28
     ACTION_SCALE_REAL = 0.1
-    RANDOMIZE = True
+    RANDOMIZE = False
 
     # Set the goal state of the cube
     cube_goal_pos = [1.0, -0.1, 0.8]
@@ -470,15 +547,15 @@ def main():
             -0.0030048529254358414,
             -1.0,
         ]
-        cube_pos = [1.0, 0.0, 0.57]
+        cube_pos = [0.93, 0.0, 0.57]
 
     # env_cfg.cube_init_state = cube_pos  # type: ignore
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
     if use_real_hw:
-        env_cfg.action_scale = ACTION_SCALE_REAL * 2  # type: ignore # * 2 to increase overall execution speed
+        env_cfg.action_scale = ACTION_SCALE_REAL * 5  # type: ignore # * 2 to increase overall execution speed
         env_cfg.CL_state = 1  # type: ignore
-        env_cfg.episode_length_s = 90000  # was 90000
+        env_cfg.episode_length_s = 15  # was 90000
 
     # Create digital twin with the real-world state
     env = gym.make(
@@ -508,7 +585,6 @@ def main():
         import os
         import json
 
-        # Define reward thresholds for each curriculum level (CL)
         curriculum_thresholds = {
             0: 0.0,  # unussed
             1: -0.10,  # min mean_reward_per_episode_rsl to move to CL1
@@ -517,74 +593,14 @@ def main():
             4: 9.0,
         }
 
-        # Plateau detection parameters
-        plateau_window = (
-            3  # how many recent rewards to track (100 episodes each return)
+        train_CL_agent(
+            env=env,
+            env_cfg=env_cfg,
+            agent_cfg=agent_cfg,
+            start_cl=start_cl,
+            resume=resume,
+            curriculum_thresholds=curriculum_thresholds,
         )
-        plateau_tolerance = 0.01  # min improvement needed to continue
-
-        max_iters_per_cl = 20  # Each iter runs for 100 episodes = 2000 steps per cl
-
-        max_cl = max(curriculum_thresholds.keys())
-
-        env.unwrapped.set_train_mode()
-        current_cl = start_cl
-
-        while current_cl <= max_cl:
-            recent_rewards = []  # reset reward history per CL
-
-            for local_iter in range(max_iters_per_cl):
-                print(
-                    f"\n🎯 Training at Curriculum Level CL{current_cl} (Iteration {local_iter})"
-                )
-
-                # Run training iteration
-                log_results = train_rsl_rl_agent_init(
-                    env, env_cfg, agent_cfg, CL=current_cl, resume=resume
-                )
-
-                # Extract metrics and save
-                log_results_ser = extract_learning_metrics(log_results)
-                log_path = f"/home/luca/isaaclab_ws/IsaacLab/source/standalone/ur5rl/pretrain_CL{current_cl}_iter{local_iter}.json"
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, "w") as f:
-                    json.dump(log_results_ser, f, indent=4)
-
-                print(json.dumps(log_results_ser, indent=2))
-
-                # Check reward
-                mean_rew = log_results_ser.get("mean_reward_per_episode_rsl", 0.0)
-
-                # Update recent rewards for plateau detection
-                recent_rewards.append(mean_rew)
-                if len(recent_rewards) > plateau_window:
-                    recent_rewards.pop(0)
-
-                # Condition 1: Threshold passed
-                if mean_rew >= curriculum_thresholds[current_cl]:
-                    print(
-                        f"✅ Reward {mean_rew:.4f} passed threshold {curriculum_thresholds[current_cl]} — moving to CL{current_cl + 1}"
-                    )
-                    current_cl += 1
-                    break
-
-                # Condition 2: Plateau detected
-                if len(recent_rewards) == plateau_window:
-                    improvement = recent_rewards[-1] - recent_rewards[0]
-                    if improvement < plateau_tolerance:
-                        print(
-                            f"📉 Plateau detected (Δreward={improvement:.4f} < {plateau_tolerance}) — moving to CL{current_cl + 1}"
-                        )
-                        current_cl += 1
-                        break
-
-                resume = True
-
-            else:
-                print(
-                    f"⚠️ Max iterations reached for CL{current_cl}, moving to next CL level."
-                )
-                current_cl += 1
 
     env.unwrapped.set_eval_mode()  # type: ignore
 
@@ -600,10 +616,9 @@ def main():
 
     print(f"Success: {success}")
     print(f"Interrupt: {interrupt}")
-    # interrupt = True  #! Force Retrain for Debug
-    success = True  #! Force Real Robot for Debug
+    interrupt = True  #! Force Retrain for Debug
 
-    if success:
+    if success and use_real_hw:
         print("Task solved in Sim!")
         print("Moving network control to real robot...")
         interrupt = False
@@ -615,17 +630,23 @@ def main():
             )
             print(f"Observations: {obs}")
 
-    elif interrupt:
-        # get interrupt state
-        # env.close()
-        # env = None
+    if interrupt:
+        print("Interrupt received, stopping the robot.")
+        curriculum_thresholds = {3: 6.5}
+        start_cl = 3
 
         arm_interrupt_state = obs[0][0:6].cpu().numpy()
         gripper_interrupt_state = obs[0][18].cpu().numpy()
-        env_cfg.arm_joints_init_state = arm_interrupt_state
-        # agent_cfg.experiment_name = EXPERIMENT_NAME
-
-        train_rsl_rl_agent(env, env_cfg, agent_cfg, resume)
+        env.unwrapped.set_arm_init_pose(arm_interrupt_state)
+        env.unwrapped.set_eval_mode()
+        train_CL_agent(
+            env=env,
+            env_cfg=env_cfg,
+            agent_cfg=agent_cfg,
+            start_cl=start_cl,
+            resume=resume,
+            curriculum_thresholds=curriculum_thresholds,
+        )
 
     return
 

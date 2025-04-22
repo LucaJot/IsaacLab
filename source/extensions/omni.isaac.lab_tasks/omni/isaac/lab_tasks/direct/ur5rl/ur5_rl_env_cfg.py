@@ -16,12 +16,9 @@ from omni.isaac.lab.sim.spawners.from_files import (
     spawn_from_usd,
     UsdFileCfg,
 )
-from omni.isaac.lab.sim.spawners.shapes import spawn_cuboid, CuboidCfg
+from omni.isaac.lab.sim.spawners.shapes import CuboidCfg
 from omni.isaac.lab.assets import (
-    RigidObject,
     RigidObjectCfg,
-    RigidObjectCollection,
-    RigidObjectCollectionCfg,
 )
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sensors import CameraCfg, Camera, ContactSensorCfg
@@ -103,8 +100,9 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     goal_reached_scaling = 10.0
     approach_reward = 0.03
     pickup_reward_scaling = 5.0  # 0.03  #! was 0.2
-    partial_grasp_reward_scaling = 0.1
-    torque_limit = 500  # was 500.0
+    partial_grasp_reward_scaling = 0.03
+    container_contact_penalty_scaling = 0.005
+    torque_limit = 9000  # was 500.0
 
     decimation = 2
     action_scale = 0.5
@@ -127,7 +125,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
 
     cube_usd_cfg = sim_utils.UsdFileCfg(
         usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(),  # kinematic_enabled=False),
     )
 
     # Camera
@@ -164,6 +162,35 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
         offset=CameraCfg.OffsetCfg(
             pos=(0.055, -0.03, 0.025), rot=(0.71, 0.0, 0.0, 0.71), convention="ros"
         ),
+    )
+
+    contact_cfg_l = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/left_inner_finger",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=False,
+        track_air_time=True,
+    )
+    contact_cfg_r = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/right_inner_finger",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=False,
+        track_air_time=True,
+    )
+    contact_cfg_t = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/container/Container",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=False,
+        track_air_time=True,
+    )
+    contact_cfg_c = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Cube/Cube",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=False,
+        track_air_time=True,
     )
 
     # Gripper parameters
@@ -222,7 +249,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     # robot
     robot_cfg: ArticulationCfg = ArticulationCfg(
         spawn=sim_utils.UsdFileCfg(
-            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper_col.usd"
+            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper.usd",
+            activate_contact_sensors=True,
         ),
         prim_path="/World/envs/env_.*/ur5",
         actuators={

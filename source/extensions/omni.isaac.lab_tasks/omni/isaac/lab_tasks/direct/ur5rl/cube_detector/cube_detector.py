@@ -163,9 +163,9 @@ class CubeDetector:
 
             # More narrow range for real images
             else:
-                lower_red1 = np.array([0, 60, 50])
-                upper_red1 = np.array([8, 255, 255])
-                lower_red2 = np.array([175, 90, 70])
+                lower_red1 = np.array([0, 50, 20])  # Lower saturation and value
+                upper_red1 = np.array([10, 255, 255])
+                lower_red2 = np.array([170, 50, 20])  # Lower saturation and value
                 upper_red2 = np.array([180, 255, 255])
 
             red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
@@ -282,8 +282,9 @@ class CubeDetector:
 
                 # Store image with contour drawn -----------------------------------
 
-                # if self.call_counter % 1000 == 0:
-                if False:
+                if (self.real and (self.call_counter % 2000 == 0)) or (
+                    not self.real and (self.call_counter % 50 == 0)
+                ):
                     # Convert the depth to an 8-bit range
                     depth_vis = (depth_image_np / self.clipping_range * 255).astype(
                         np.uint8
@@ -300,25 +301,13 @@ class CubeDetector:
                     )
 
                     cv2.imwrite(
-                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_depth_{self.call_counter}.png",
+                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_depth_{self.call_counter}_REAL_{str(self.real)}.png",
                         depth_vis_bgr,
                     )
 
                     cv2.imwrite(
-                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_rgb_{self.call_counter}.png",
+                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_rgb_{self.call_counter}_REAL_{str(self.real)}.png",
                         rgb_image_np,
-                    )
-
-                    # Convert modified HSV to BGR for visualization
-                    hsv_vis_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-                    # Draw the same contour on the HSV-BGR image
-                    cv2.drawContours(hsv_vis_bgr, [largest_contour], -1, (0, 255, 0), 3)
-
-                    # Save the HSV image with the contour
-                    cv2.imwrite(
-                        f"/home/luca/Pictures/isaacsimcameraframes/Cube_hsvmod_{self.call_counter}.png",
-                        hsv_vis_bgr,
                     )
 
                     # print(f"Large z: {z}")
