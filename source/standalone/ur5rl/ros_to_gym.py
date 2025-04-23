@@ -12,6 +12,7 @@ from ros2_humble_ws.src.ur5_parallel_control.ur5_parallel_control.realsense_obs 
 )
 
 import numpy as np
+from termcolor import colored
 
 
 class ros_to_gym:
@@ -198,19 +199,38 @@ class ros_to_gym:
         obs, _ = self.get_obs_from_real_world()
 
         if self.check_grasp_success(obs):
-            print("[INFO]: Grasp successful!")
+            print(colored("✅ [SUCCESS]: Grasp successful!", "green"))
             success = True
             return (success, interrupt, time_out, obs)
         # Check if the first 3 torques are > 95 or the last 3 torques are > 20
         torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
         if np.any(torques > 130) or np.any(torques[3:] > 30):
-            print(f"Torques: {torques}")
-            print("[INFO]: Torques are too high, stopping the robot.")
+            print(colored(f"⚠️  [WARNING]: Torques too high! Values: {torques}", "red"))
+            print(
+                colored(
+                    "🛑 [ACTION]: Stopping the robot due to excessive torque.", "red"
+                )
+            )
             interrupt = True
             return (success, interrupt, time_out, obs)
         if time_out:  #! DUMMY
-            print("[INFO]: Time out!")
+            print(colored("⏰ [TIMEOUT]: Maximum time exceeded.", "yellow"))
             time_out = True
+            return (success, interrupt, time_out, obs)
+        dist_cube_cam = obs[0].squeeze().squeeze()[17].item()
+        if dist_cube_cam < 0.12:
+            print(
+                colored(
+                    f"📏 [DISTANCE WARNING]: Cube too close to camera ({dist_cube_cam:.3f} m)!",
+                    "magenta",
+                )
+            )
+            print(
+                colored(
+                    "🛑 [ACTION]: Interrupt triggered to prevent unsafe grasp.", "red"
+                )
+            )
+            interrupt = True
             return (success, interrupt, time_out, obs)
 
         return False, False, False, obs  # No event detected

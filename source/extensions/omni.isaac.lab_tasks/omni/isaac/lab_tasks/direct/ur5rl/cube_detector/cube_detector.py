@@ -311,7 +311,7 @@ class CubeDetector:
                     )
 
                     # print(f"Large z: {z}")
-                    print(f"Image saved at req. no: {self.call_counter}")
+                    # print(f"Image saved at req. no: {self.call_counter}")
 
                 # --------------------------------------------------------------------
                 self.call_counter += 1

@@ -102,7 +102,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     pickup_reward_scaling = 5.0  # 0.03  #! was 0.2
     partial_grasp_reward_scaling = 0.03
     container_contact_penalty_scaling = 0.005
-    torque_limit = 9000  # was 500.0
+    torque_limit = 1800  # was 500.0
 
     decimation = 2
     action_scale = 0.5

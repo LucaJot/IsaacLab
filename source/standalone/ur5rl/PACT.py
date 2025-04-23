@@ -511,7 +511,7 @@ def main():
     start_cl = 3
     EXPERIMENT_NAME = "_"
     NUM_ENVS = 2  #  28
-    ACTION_SCALE_REAL = 0.07
+    ACTION_SCALE_REAL = 0.04
     RANDOMIZE = False
 
     # Set the goal state of the cube
@@ -613,6 +613,8 @@ def main():
             agent_cfg=agent_cfg,
             simulation_app=simulation_app,
         )
+        obs = obs.squeeze()
+        obs = obs[0]
 
         print(f"Success: {success}")
         print(f"Interrupt: {interrupt}")
@@ -632,12 +634,17 @@ def main():
                 success, interrupt, time_out, obs = rg_node.step_real(
                     policy, action_scale=ACTION_SCALE_REAL
                 )
+            obs = obs.squeeze()
+        if success and not use_real_hw:
+            print_boxed("🎯 Task solved in Simulation!", color="green")
+            print(colored("🤖 Real Hardware is disabled -> Done", color="cyan"))
+            break
 
         # STATE SPECIFIC RETRAINING:
         if interrupt:
             print_boxed("🚨 Interrupt received, stopping the robot!", color="red")
-            joint_angles = obs[0][0][0:6].cpu().numpy()
-            gripper = bool(obs[0][0][7].cpu().numpy())
+            joint_angles = obs[0:6].cpu().numpy()
+            gripper = bool(obs[7].cpu().numpy())
         # GENERAL RETRAINING:
         elif time_out:
             print_boxed("⏰ Time out reached!", color="yellow")
@@ -655,11 +662,11 @@ def main():
             env.unwrapped.set_arm_init_pose(joint_angles)
             env.unwrapped.set_eval_mode()
         else:
-            print_boxed("❗ Unexpected termination! Exiting loop...", color="red")
+            print_boxed("❗ Termination without event! Exiting loop...", color="red")
             break
 
         print_boxed("🔄 Retraining the agent...", color="blue", symbol="=")
-        curriculum_thresholds = {4: 6.5}
+        curriculum_thresholds = {4: 5.0}
         start_cl = 4
         train_CL_agent(
             env=env,
