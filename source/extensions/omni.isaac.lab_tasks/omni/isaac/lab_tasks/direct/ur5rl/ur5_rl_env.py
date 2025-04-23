@@ -208,6 +208,27 @@ class HawUr5Env(DirectRLEnv):
 
         self.DEBUG_GRIPPER = True
 
+    def set_gripper_action_bin(self, gripper_action_bin: list) -> bool:
+        """Set the gripper action bin.
+
+        Args:
+            gripper_action_bin (list): The gripper action bin to set.
+
+        Returns:
+            bool: True if the gripper action bin was set successfully, False otherwise.
+        """
+
+        if len(gripper_action_bin) != self.scene.num_envs:
+            warnings.warn(
+                f"[WARNING] Expected {self.scene.num_envs} gripper actions, got {len(gripper_action_bin)}",
+                UserWarning,
+            )
+            return False
+
+        gripper_action = torch.tensor(gripper_action_bin, device="cuda:0")
+        self.gripper_action_bin = gripper_action
+        return True
+
     def set_eval_mode(self):
         self.randomize = False
 
@@ -1079,43 +1100,43 @@ def compute_rewards(
         torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
     )
 
-    partial_grasp_reward = torch.where(
-        (partial_grasp == True) & (dist_cube_cam > 0.16) & (grasp_success == False),
-        torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
-        torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
-    )
+    # partial_grasp_reward = torch.where(
+    #     (partial_grasp == True) & (dist_cube_cam > 0.16) & (grasp_success == False),
+    #     torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
+    #     torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
+    # )
 
-    partial_grasp_reward = partial_grasp_reward * partial_grasp_reward_scaling
+    # partial_grasp_reward = partial_grasp_reward * partial_grasp_reward_scaling
 
     pickup_reward = pickup_reward * pickup_reward_scaling
 
-    open_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.22) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
-        torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    )
+    # open_gripper_incentive = torch.where(
+    #     (dist_cube_cam > 0.22) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
+    #     torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    #     torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    # )
 
-    close_gripper_incentive = torch.where(
-        (dist_cube_cam > 0.18) & (dist_cube_cam < 0.22) & (gripper_action_bin > 0),
-        torch.tensor(0.01, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    )
+    # close_gripper_incentive = torch.where(
+    #     (dist_cube_cam > 0.18) & (dist_cube_cam < 0.22) & (gripper_action_bin > 0),
+    #     torch.tensor(0.01, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    #     torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    # )
 
-    # Container contact penalty
-    container_contact_penalty_t = torch.where(
-        container_contact,
-        torch.tensor(1.0, device=container_contact.device),
-        torch.tensor(0.0, device=container_contact.device),
-    )
-    container_contact_penalty = (
-        container_contact_penalty_scaling * container_contact_penalty_t
-    )
+    # # Container contact penalty
+    # container_contact_penalty_t = torch.where(
+    #     container_contact,
+    #     torch.tensor(1.0, device=container_contact.device),
+    #     torch.tensor(0.0, device=container_contact.device),
+    # )
+    # container_contact_penalty = (
+    #     container_contact_penalty_scaling * container_contact_penalty_t
+    # )
 
-    pickup_reward += (
-        open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
-    )
+    # pickup_reward += (
+    #     open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
+    # )
 
-    pickup_reward -= container_contact_penalty
+    # pickup_reward -= container_contact_penalty
 
     # Exponential decay of reward with distance
     # dist_cube_cam = torch.where(

@@ -188,18 +188,25 @@ def run_task_in_sim(
             # env stepping
             obs, reward, dones, info = env.step(actions)  # type: ignore
             # print_dict(info)
-            if dones[0]:  # type: ignore
-                if info["time_outs"][0]:  # type: ignore
-                    print("Time Out!")
-                    return False, False, obs, policy
-                else:
-                    print("Interrupt detected!")
-                    if info["observations"]["torque_limit_exeeded"][0]:
-                        print("Torque Limit Exceeded!")
-                    last_obs = obs.clone()
-                    torch.save(last_obs, os.path.join(log_dir, "last_obs.pt"))
-                    return False, True, obs, policy
+            grasp_success = info["observations"]["grasp_success"][0].item()
+            time_out = info["time_outs"][0].item()  # type: ignore
+            torque_limit_exceeded = info["observations"]["torque_limit_exeeded"][
+                0
+            ].item()
 
-            if info["observations"]["grasp_success"][0]:  # type: ignore
+            if grasp_success:
                 print("Grasp Successful!")
-                return True, False, obs, policy
+                return True, False, False, obs, policy
+            if time_out:  # type: ignore
+                print("Time Out!")
+                return False, False, True, obs, policy
+            if torque_limit_exceeded:
+                print("Torque Limit Exceeded!")
+                return False, True, False, obs, policy
+            elif dones[0]:  # type: ignore
+                print("Unexpected termination!")
+                return False, False, False, obs, policy
+
+            # last_obs = obs.clone()
+            # torch.save(last_obs, os.path.join(log_dir, "last_obs.pt"))
+            # return False, True, obs, policy

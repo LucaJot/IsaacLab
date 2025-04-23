@@ -167,9 +167,24 @@ class ros_to_gym:
             pos_sensor_cpu[0],
         )
 
+    def check_grasp_success(self, obs):
+        """Check if the grasp is successful."""
+        # Check if the cube is in the gripper
+        gripper_state = obs[0].squeeze().squeeze()[12].item()  # state == 1 is closed
+        distance_cube_cam = obs[0].squeeze().squeeze()[17].item()
+        pos_sensor_x = obs[0].squeeze().squeeze()[18].item()
+        pos_sensor_y = obs[0].squeeze().squeeze()[19].item()
+
+        if gripper_state == 1 and distance_cube_cam < 0.22 and distance_cube_cam > 0.15:
+            # Check if the cube is in the gripper
+            if pos_sensor_x > 0.2 and pos_sensor_x < 0.8 and pos_sensor_y > 0.2:
+                return True
+
     def step_real(self, policy, action_scale=1.0):
         """Play with RSL-RL agent in real world."""
+        success = False
         interrupt = False
+        time_out = False
         # Get the current joint positions from the real robot
         obs, _ = self.get_obs_from_real_world()
         action = policy(obs)
@@ -181,13 +196,26 @@ class ros_to_gym:
         self.ur5_control.set_joint_delta(action.detach().cpu().numpy())  # type: ignore
 
         obs, _ = self.get_obs_from_real_world()
-        torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
+
+        if self.check_grasp_success(obs):
+            print("[INFO]: Grasp successful!")
+            success = True
+            return (success, interrupt, time_out, obs)
         # Check if the first 3 torques are > 95 or the last 3 torques are > 20
-        if np.any(torques > 95) or np.any(torques[3:] > 20):
+        torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
+        if np.any(torques > 130) or np.any(torques[3:] > 30):
             print(f"Torques: {torques}")
             print("[INFO]: Torques are too high, stopping the robot.")
             interrupt = True
-        return (obs, interrupt)
+            return (success, interrupt, time_out, obs)
+        if time_out:  #! DUMMY
+            print("[INFO]: Time out!")
+            time_out = True
+            return (success, interrupt, time_out, obs)
+
+        return False, False, False, obs  # No event detected
+
+        # Check if the goal is reached
 
     def step_real_with_action(self, action, action_scale=0.08):
         """Apply action command to the real world."""

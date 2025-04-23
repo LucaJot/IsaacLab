@@ -282,9 +282,9 @@ class CubeDetector:
 
                 # Store image with contour drawn -----------------------------------
 
-                if (self.real and (self.call_counter % 2000 == 0)) or (
-                    not self.real and (self.call_counter % 50 == 0)
-                ):
+                if self.real and (
+                    self.call_counter % 2000 == 0
+                ):  #  or (not self.real and (self.call_counter % 50 == 0))
                     # Convert the depth to an 8-bit range
                     depth_vis = (depth_image_np / self.clipping_range * 255).astype(
                         np.uint8

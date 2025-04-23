@@ -55,6 +55,7 @@ import os
 import torch
 import numpy as np
 import time
+from termcolor import colored
 
 
 def move_to_detection_test_positions_alt(
@@ -491,19 +492,26 @@ def train_CL_agent(
             current_cl += 1
 
 
+def print_boxed(message, color=["grey"], symbol="*"):
+    line = symbol * (len(message) + 4)
+    print(colored(line, color))
+    print(colored(f"{symbol} {message} {symbol}", color))
+    print(colored(line, color))
+
+
 def main():
     """Main function."""
 
     # Get init state from real hw or stored state
-    use_real_hw = False
+    use_real_hw = True
     # Pretrain the model
     pretrain = False
     # Resume the last training
     resume = True
     start_cl = 3
     EXPERIMENT_NAME = "_"
-    NUM_ENVS = 1  #  28
-    ACTION_SCALE_REAL = 0.1
+    NUM_ENVS = 2  #  28
+    ACTION_SCALE_REAL = 0.07
     RANDOMIZE = False
 
     # Set the goal state of the cube
@@ -553,7 +561,7 @@ def main():
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
     if use_real_hw:
-        env_cfg.action_scale = ACTION_SCALE_REAL * 5  # type: ignore # * 2 to increase overall execution speed
+        env_cfg.action_scale = 1.0  # type: ignore to increase overall execution speed
         env_cfg.CL_state = 1  # type: ignore
         env_cfg.episode_length_s = 15  # was 90000
 
@@ -570,16 +578,6 @@ def main():
         print("Set arm init pose successful!")
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env)  # type: ignore
-
-    # env.unwrapped.set_eval_mode()  # type: ignore
-    # move_to_detection_test_positions_real_and_sim(
-    #     rg_node,
-    #     env,
-    #     output_file="/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/sim2real_all_info_log.csv",
-    #     steps_per_target=2000,
-    #     action_scale=ACTION_SCALE_REAL,
-    # )
-    # return
 
     if pretrain:
         import os
@@ -602,43 +600,67 @@ def main():
             curriculum_thresholds=curriculum_thresholds,
         )
 
-    env.unwrapped.set_eval_mode()  # type: ignore
+    # ------------------- CORE WORKFLOW INIT -----------------------------
 
-    # Run the task in the simulator
-    success, interrupt, obs, policy = run_task_in_sim(
-        env,
-        log_dir=log_dir,
-        resume_path=resume_path,
-        agent_cfg=agent_cfg,
-        simulation_app=simulation_app,
-    )
-    # --------------------------------------------------------------------
+    while True:
+        env.unwrapped.set_eval_mode()  # type: ignore
 
-    print(f"Success: {success}")
-    print(f"Interrupt: {interrupt}")
-    interrupt = True  #! Force Retrain for Debug
+        # VALIDATION RUN:
+        success, interrupt, time_out, obs, policy = run_task_in_sim(
+            env,
+            log_dir=log_dir,
+            resume_path=resume_path,
+            agent_cfg=agent_cfg,
+            simulation_app=simulation_app,
+        )
 
-    if success and use_real_hw:
-        print("Task solved in Sim!")
-        print("Moving network control to real robot...")
-        interrupt = False
+        print(f"Success: {success}")
+        print(f"Interrupt: {interrupt}")
+        print(f"Time out: {time_out}")
+        # print(f"Obs: {obs}")
+        # interrupt = True  #! Force Retrain for Debug
 
-        while not rg_node.goal_reached() and not interrupt:
-            obs, interrupt = rg_node.step_real(
-                policy,
-                action_scale=ACTION_SCALE_REAL * 0.3,
-            )
-            print(f"Observations: {obs}")
+        # REAL-WORLD RUN:
+        if success and use_real_hw:
+            print_boxed("🎯 Task solved in Simulation!", color="green")
+            print(colored("🤖 Moving network control to real robot...", "cyan"))
+            success = False
+            interrupt = False
+            time_out = False
 
-    if interrupt:
-        print("Interrupt received, stopping the robot.")
-        curriculum_thresholds = {3: 6.5}
-        start_cl = 3
+            while not (success or interrupt or time_out):
+                success, interrupt, time_out, obs = rg_node.step_real(
+                    policy, action_scale=ACTION_SCALE_REAL
+                )
 
-        arm_interrupt_state = obs[0][0:6].cpu().numpy()
-        gripper_interrupt_state = obs[0][18].cpu().numpy()
-        env.unwrapped.set_arm_init_pose(arm_interrupt_state)
-        env.unwrapped.set_eval_mode()
+        # STATE SPECIFIC RETRAINING:
+        if interrupt:
+            print_boxed("🚨 Interrupt received, stopping the robot!", color="red")
+            joint_angles = obs[0][0][0:6].cpu().numpy()
+            gripper = bool(obs[0][0][7].cpu().numpy())
+        # GENERAL RETRAINING:
+        elif time_out:
+            print_boxed("⏰ Time out reached!", color="yellow")
+            joint_angles = [
+                -0.15472919145692998,
+                -1.8963201681720179,
+                1.5,
+                -2.460175625477926,
+                -1.5792139212237757,
+                -0.0030048529254358414,
+            ]
+            gripper = [-1.0]
+
+            env.unwrapped.set_gripper_action_bin(gripper)
+            env.unwrapped.set_arm_init_pose(joint_angles)
+            env.unwrapped.set_eval_mode()
+        else:
+            print_boxed("❗ Unexpected termination! Exiting loop...", color="red")
+            break
+
+        print_boxed("🔄 Retraining the agent...", color="blue", symbol="=")
+        curriculum_thresholds = {4: 6.5}
+        start_cl = 4
         train_CL_agent(
             env=env,
             env_cfg=env_cfg,
@@ -648,6 +670,7 @@ def main():
             curriculum_thresholds=curriculum_thresholds,
         )
 
+    # --------------------------------------------------------------------
     return
 
 
