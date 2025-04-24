@@ -94,7 +94,7 @@ class ros_to_gym:
         cube_pos_cpu, data_age_cpu, z_cpu, pos_sensor_cpu = (
             self.get_current_cube_pos_from_real_robot()
         )
-        cube_pos_cpu[0][2] += 0.1  #! Add offset to z axis
+        cube_pos_cpu[0][2] += 0.0  #! Add offset to z axis
         cube_pos = torch.from_numpy(cube_pos_cpu).to("cuda:0")
         data_age = torch.tensor(data_age_cpu).to("cuda:0")
         z = torch.tensor(z_cpu).to("cuda:0")
@@ -204,7 +204,7 @@ class ros_to_gym:
             return (success, interrupt, time_out, obs)
         # Check if the first 3 torques are > 95 or the last 3 torques are > 20
         torques = np.abs(obs[0].squeeze().squeeze()[6:12].cpu().numpy())
-        if np.any(torques > 130) or np.any(torques[3:] > 30):
+        if np.any(torques > 150) or np.any(torques[3:] > 30):
             print(colored(f"⚠️  [WARNING]: Torques too high! Values: {torques}", "red"))
             print(
                 colored(
@@ -213,12 +213,11 @@ class ros_to_gym:
             )
             interrupt = True
             return (success, interrupt, time_out, obs)
-        if time_out:  #! DUMMY
+        if time_out:
             print(colored("⏰ [TIMEOUT]: Maximum time exceeded.", "yellow"))
-            time_out = True
             return (success, interrupt, time_out, obs)
         dist_cube_cam = obs[0].squeeze().squeeze()[17].item()
-        if dist_cube_cam < 0.12:
+        if dist_cube_cam < 0.12 and dist_cube_cam > 0.0:
             print(
                 colored(
                     f"📏 [DISTANCE WARNING]: Cube too close to camera ({dist_cube_cam:.3f} m)!",
