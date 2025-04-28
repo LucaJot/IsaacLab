@@ -269,9 +269,11 @@ class HawUr5Env(DirectRLEnv):
             "num_buckets": 250,
         }
 
-    def set_train_mode(self):
-        self.randomize = True
+    def set_randomization(self, randomize: bool):
+        self.randomize = randomize
+        return True
 
+    def set_train_mode(self):
         self.cfg.events.robot_joint_stiffness_and_damping.params = {
             "asset_cfg": SceneEntityCfg(
                 name="ur5",
@@ -332,6 +334,7 @@ class HawUr5Env(DirectRLEnv):
             self.robot.data.default_joint_pos = joint_init_state.repeat(
                 self.scene.num_envs, 1
             )
+            self.set_joint_angles_absolute(joint_angles=joint_angles)
             return True
 
     def get_joint_pos(self):
@@ -573,7 +576,7 @@ class HawUr5Env(DirectRLEnv):
             & right_contact
             & cube_contact
             & ~container_contact
-            & (self.dist_cube_cam > 0.16)
+            & (self.dist_cube_cam > 0.14)
             & (self.data_age < 3.0)
         )
 
@@ -582,14 +585,14 @@ class HawUr5Env(DirectRLEnv):
             & cube_contact
             & ~right_contact
             & ~container_contact
-            & (self.dist_cube_cam > 0.16)
+            & (self.dist_cube_cam > 0.14)
             & (self.data_age < 3.0)
         ) | (
             right_contact
             & cube_contact
             & ~left_contact
             & ~container_contact
-            & (self.dist_cube_cam > 0.16)
+            & (self.dist_cube_cam > 0.14)
             & (self.data_age < 3.0)
         )
 
@@ -599,7 +602,7 @@ class HawUr5Env(DirectRLEnv):
 
         if torch.any(partial_grasp_success):
             grasp_idx = torch.where(partial_grasp_success)[0]
-            print(f"Partial grasp in envs: {grasp_idx}")
+            # print(f"Partial grasp in envs: {grasp_idx}")
 
         grasp_success = grasp_success.squeeze(-1)
         partial_grasp_success = partial_grasp_success.squeeze(-1)
@@ -937,9 +940,7 @@ class HawUr5Env(DirectRLEnv):
         try:
             # Set arm joint angles from list
             T_arm_angles = torch.tensor(joint_angles[:6], device=self.device)
-            T_arm_angles = T_arm_angles.unsqueeze(1)
-            # Set gripper joint angles from list
-            T_arm_angles = torch.transpose(T_arm_angles, 0, 1)
+            T_arm_angles = T_arm_angles.repeat(self.scene.num_envs, 1)
 
             default_velocities = self.robot.data.default_joint_vel
 
@@ -948,6 +949,7 @@ class HawUr5Env(DirectRLEnv):
             print(f"Setting joint angles to: {T_arm_angles}")
             print(f"Shape of joint angles: {T_arm_angles.shape}")
             self.robot.write_joint_state_to_sim(T_arm_angles, default_velocities[:, :6], self._arm_dof_idx, None)  # type: ignore
+            self.jointpos_script_GT = T_arm_angles.clone()
             return True
         except Exception as e:
             print(f"Error setting joint angles: {e}")
@@ -1095,48 +1097,48 @@ def compute_rewards(
         torque_limit_exceeded_penalty_scaling * torque_limit_exceeded
     )
     pickup_reward = torch.where(
-        (grasp_success == True) & (dist_cube_cam > 0.16),
+        (grasp_success == True) & (dist_cube_cam > 0.14),
         torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
         torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
     )
 
-    # partial_grasp_reward = torch.where(
-    #     (partial_grasp == True) & (dist_cube_cam > 0.16) & (grasp_success == False),
-    #     torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
-    #     torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
-    # )
+    partial_grasp_reward = torch.where(
+        (partial_grasp == True) & (dist_cube_cam > 0.16) & (grasp_success == False),
+        torch.tensor(1.0, dtype=cube_z.dtype, device=cube_z.device),
+        torch.tensor(0.0, dtype=cube_z.dtype, device=cube_z.device),
+    )
 
-    # partial_grasp_reward = partial_grasp_reward * partial_grasp_reward_scaling
+    partial_grasp_reward = partial_grasp_reward * partial_grasp_reward_scaling
 
     pickup_reward = pickup_reward * pickup_reward_scaling
 
-    # open_gripper_incentive = torch.where(
-    #     (dist_cube_cam > 0.22) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
-    #     torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    #     torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    # )
+    open_gripper_incentive = torch.where(
+        (dist_cube_cam > 0.22) & (dist_cube_cam < 0.4) & (gripper_action_bin > 0),
+        torch.tensor(-0.005, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    )
 
-    # close_gripper_incentive = torch.where(
-    #     (dist_cube_cam > 0.18) & (dist_cube_cam < 0.22) & (gripper_action_bin > 0),
-    #     torch.tensor(0.01, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    #     torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
-    # )
+    close_gripper_incentive = torch.where(
+        (dist_cube_cam > 0.18) & (dist_cube_cam < 0.22) & (gripper_action_bin > 0),
+        torch.tensor(0.01, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+        torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+    )
 
-    # # Container contact penalty
-    # container_contact_penalty_t = torch.where(
-    #     container_contact,
-    #     torch.tensor(1.0, device=container_contact.device),
-    #     torch.tensor(0.0, device=container_contact.device),
-    # )
-    # container_contact_penalty = (
-    #     container_contact_penalty_scaling * container_contact_penalty_t
-    # )
+    # Container contact penalty
+    container_contact_penalty_t = torch.where(
+        container_contact,
+        torch.tensor(1.0, device=container_contact.device),
+        torch.tensor(0.0, device=container_contact.device),
+    )
+    container_contact_penalty = (
+        container_contact_penalty_scaling * container_contact_penalty_t
+    )
 
-    # pickup_reward += (
-    #     open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
-    # )
+    pickup_reward += (
+        open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
+    )
 
-    # pickup_reward -= container_contact_penalty
+    pickup_reward -= container_contact_penalty
 
     # Exponential decay of reward with distance
     # dist_cube_cam = torch.where(
