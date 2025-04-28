@@ -4,7 +4,6 @@ import math
 from omni.isaac.lab.sim.spawners.spawner_cfg import RigidObjectSpawnerCfg
 import torch
 from collections.abc import Sequence
-
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
@@ -100,9 +99,9 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     goal_reached_scaling = 10.0
     approach_reward = 0.03
     pickup_reward_scaling = 5.0  # 0.03  #! was 0.2
-    partial_grasp_reward_scaling = 0.03
+    partial_grasp_reward_scaling = 0.01
     container_contact_penalty_scaling = 0.005
-    torque_limit = 1800  # was 500.0
+    torque_limit = 3000  # was 500.0
 
     decimation = 2
     action_scale = 0.5
@@ -301,7 +300,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
     # at every time-step add gaussian noise + bias. The bias is a gaussian sampled at reset
     observation_noise_model: NoiseModelWithAdditiveBiasCfg = (
         NoiseModelWithAdditiveBiasCfg(
-            noise_cfg=GaussianNoiseCfg(mean=0.0, std=0.002, operation="add"),
-            bias_noise_cfg=GaussianNoiseCfg(mean=0.0, std=0.0001, operation="abs"),
+            noise_cfg=GaussianNoiseCfg(mean=0.0, std=0.004, operation="add"),
+            bias_noise_cfg=GaussianNoiseCfg(mean=0.0, std=0.0002, operation="abs"),
         )
     )
