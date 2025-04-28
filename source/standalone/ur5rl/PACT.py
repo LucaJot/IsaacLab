@@ -432,8 +432,8 @@ def train_CL_agent(
 
     max_cl = max(curriculum_thresholds.keys())
 
-    env.unwrapped.set_train_mode()
     current_cl = start_cl
+    env.unwrapped.set_train_mode()
 
     while current_cl <= max_cl:
         recent_rewards = []  # reset reward history per CL
@@ -511,7 +511,7 @@ def main():
     start_cl = 3
     EXPERIMENT_NAME = "_"
     NUM_ENVS = 2  #  28
-    ACTION_SCALE_REAL = 0.04
+    ACTION_SCALE_REAL = 0.03
     RANDOMIZE = False
 
     # Set the goal state of the cube
@@ -561,9 +561,11 @@ def main():
     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
     env_cfg.cube_init_state = cube_pos  # type: ignore
     if use_real_hw:
-        env_cfg.action_scale = 1.0  # type: ignore to increase overall execution speed
-        env_cfg.CL_state = 1  # type: ignore
-        env_cfg.episode_length_s = 15  # was 90000
+        env_cfg.action_scale = 0.5  # type: ignore to increase overall execution speed
+        env_cfg.CL_state = 3  # type: ignore
+        # env_cfg.episode_length_s = 3  # was 90000
+
+    env_cfg.episode_length_s = 9  # was 9
 
     # Create digital twin with the real-world state
     env = gym.make(
@@ -603,10 +605,18 @@ def main():
     # ------------------- CORE WORKFLOW INIT -----------------------------
 
     while True:
+        success_sim = False
+        interrupt_sim = False
+        time_out_sim = False
+
+        success_real = False
+        interrupt_real = False
+        time_out_real = False
+
         env.unwrapped.set_eval_mode()  # type: ignore
 
         # VALIDATION RUN:
-        success, interrupt, time_out, obs, policy = run_task_in_sim(
+        success_sim, interrupt_sim, time_out_sim, obs, policy = run_task_in_sim(
             env,
             log_dir=log_dir,
             resume_path=resume_path,
@@ -616,38 +626,97 @@ def main():
         obs = obs.squeeze()
         obs = obs[0]
 
-        print(f"Success: {success}")
-        print(f"Interrupt: {interrupt}")
-        print(f"Time out: {time_out}")
+        print(f"Success: {success_sim}")
+        print(f"Interrupt: {interrupt_sim}")
+        print(f"Time out: {time_out_sim}")
         # print(f"Obs: {obs}")
         # interrupt = True  #! Force Retrain for Debug
 
         # REAL-WORLD RUN:
-        if success and use_real_hw:
+        debug_step_counter = 0
+        if success_sim and use_real_hw:
+
             print_boxed("🎯 Task solved in Simulation!", color="green")
             print(colored("🤖 Moving network control to real robot...", "cyan"))
-            success = False
-            interrupt = False
-            time_out = False
 
-            while not (success or interrupt or time_out):
-                success, interrupt, time_out, obs = rg_node.step_real(
+            while not (success_real or interrupt_real or time_out_real):
+                success_real, interrupt_real, time_out_real, obs = rg_node.step_real(
                     policy, action_scale=ACTION_SCALE_REAL
                 )
+                debug_step_counter += 1
             obs = obs.squeeze()
-        if success and not use_real_hw:
+            print(f"Steps: {debug_step_counter}")
+        elif success_sim and not use_real_hw:
             print_boxed("🎯 Task solved in Simulation!", color="green")
             print(colored("🤖 Real Hardware is disabled -> Done", color="cyan"))
             break
+        elif time_out_sim:
+            print_boxed("⏰ Time out reached in Simulation!", color="red")
+            print_boxed("🔄 Retraining the agent...", color="blue", symbol="=")
+            joint_angles = obs[0:6].cpu().numpy()
+            # joint_angles = [
+            #     -0.15472919145692998,
+            #     -1.8963201681720179,
+            #     1.5,
+            #     -2.460175625477926,
+            #     -1.5792139212237757,
+            #     -0.0030048529254358414,
+            # ]
+            gripper = [-1.0] * NUM_ENVS
+            env.unwrapped.set_gripper_action_bin(gripper)
+            env.unwrapped.set_arm_init_pose(joint_angles)
+            env.unwrapped.set_eval_mode()
+            curriculum_thresholds = {4: 5.0}
+            start_cl = 3
+            train_CL_agent(
+                env=env,
+                env_cfg=env_cfg,
+                agent_cfg=agent_cfg,
+                start_cl=start_cl,
+                resume=resume,
+                curriculum_thresholds=curriculum_thresholds,
+            )
+        elif interrupt_sim:
+            print_boxed(
+                "🚨 Interrupt received initiating interrupt training around last known state!",
+                color="red",
+            )
+            env.unwrapped.set_randomization(False)
+            joint_angles = obs[0:6].cpu().numpy()
+            gripper = [-1.0] * NUM_ENVS
+            env.unwrapped.set_gripper_action_bin(gripper)
+            env.unwrapped.set_arm_init_pose(joint_angles)
+            curriculum_thresholds = {4: 5.0}
+            start_cl = 3
+            train_CL_agent(
+                env=env,
+                env_cfg=env_cfg,
+                agent_cfg=agent_cfg,
+                start_cl=start_cl,
+                resume=resume,
+                curriculum_thresholds=curriculum_thresholds,
+            )
+        else:
+            print_boxed("❗ Termination without event! Exiting loop...", color="red")
+            break
 
-        # STATE SPECIFIC RETRAINING:
-        if interrupt:
-            print_boxed("🚨 Interrupt received, stopping the robot!", color="red")
+        if success_real:
+            print_boxed("🎯 Task solved on Real Robot!", color="green")
+            # Move to the next task
+            break
+
+        # STATE SPECIFIC RETRAINING AFTER REAL-WORLD RUN:
+        if interrupt_real:
+            print_boxed(
+                "🚨 Interrupt received on real hardware - initiating interrupt training around last known state!",
+                color="red",
+            )
             joint_angles = obs[0:6].cpu().numpy()
             gripper = bool(obs[7].cpu().numpy())
         # GENERAL RETRAINING:
-        elif time_out:
+        elif time_out_real:
             print_boxed("⏰ Time out reached!", color="yellow")
+            print(colored("Initiating general retraining...", "yellow"))
             joint_angles = [
                 -0.15472919145692998,
                 -1.8963201681720179,
@@ -667,7 +736,7 @@ def main():
 
         print_boxed("🔄 Retraining the agent...", color="blue", symbol="=")
         curriculum_thresholds = {4: 5.0}
-        start_cl = 4
+        start_cl = 3
         train_CL_agent(
             env=env,
             env_cfg=env_cfg,
