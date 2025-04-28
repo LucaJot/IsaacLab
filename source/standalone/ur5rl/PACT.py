@@ -631,6 +631,7 @@ def main():
         print(f"Time out: {time_out_sim}")
         # print(f"Obs: {obs}")
         # interrupt = True  #! Force Retrain for Debug
+        # success_sim = True  #! Force Success for Debug
 
         # REAL-WORLD RUN:
         debug_step_counter = 0
@@ -644,6 +645,8 @@ def main():
                     policy, action_scale=ACTION_SCALE_REAL
                 )
                 debug_step_counter += 1
+                if debug_step_counter > 1000:
+                    time_out_real = True
             obs = obs.squeeze()
             print(f"Steps: {debug_step_counter}")
         elif success_sim and not use_real_hw:
