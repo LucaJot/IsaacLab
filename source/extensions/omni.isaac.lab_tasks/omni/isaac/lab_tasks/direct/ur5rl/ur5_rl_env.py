@@ -1134,11 +1134,11 @@ def compute_rewards(
         container_contact_penalty_scaling * container_contact_penalty_t
     )
 
-    pickup_reward += (
-        open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
-    )
+    # pickup_reward += (
+    #     open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
+    # )
 
-    pickup_reward -= container_contact_penalty
+    # pickup_reward -= container_contact_penalty
 
     # Exponential decay of reward with distance
     # dist_cube_cam = torch.where(
