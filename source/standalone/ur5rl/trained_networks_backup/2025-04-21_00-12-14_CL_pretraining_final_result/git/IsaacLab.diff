@@ -1,0 +1,927 @@
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   source/extensions/omni.isaac.lab/omni/isaac/lab/envs/ui/base_env_window.py
+	modified:   source/extensions/omni.isaac.lab/omni/isaac/lab/sensors/contact_sensor/contact_sensor.py
+	modified:   source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_pos_dist_and_torque.py
+	modified:   source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env.py
+	modified:   source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env_cfg.py
+	modified:   source/standalone/ur5rl/PACT.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/logdir/
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_cube_pos.py
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_cube_pos_two_in_one.py
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_gap.py
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_gap_torque_vel.py
+	source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/pos_and_dist.png
+	source/standalone/ur5rl/pretrain_CL1_iter0.json
+	source/standalone/ur5rl/pretrain_CL1_iter1.json
+	source/standalone/ur5rl/pretrain_CL1_iter2.json
+	source/standalone/ur5rl/pretrain_CL2_iter0.json
+	source/standalone/ur5rl/pretrain_CL2_iter1.json
+	source/standalone/ur5rl/pretrain_CL3_iter0.json
+	source/standalone/ur5rl/pretrain_CL3_iter1.json
+	source/standalone/ur5rl/pretrain_CL3_iter2.json
+	source/standalone/ur5rl/pretrain_CL3_iter3.json
+	source/standalone/ur5rl/pretrain_CL3_iter4.json
+	source/standalone/ur5rl/pretrain_CL3_iter5.json
+	source/standalone/ur5rl/test_cube_robustness.py
+	thesis_debug_plots.png
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/source/extensions/omni.isaac.lab/omni/isaac/lab/envs/ui/base_env_window.py b/source/extensions/omni.isaac.lab/omni/isaac/lab/envs/ui/base_env_window.py
+index 850ad0a3..eb586014 100644
+--- a/source/extensions/omni.isaac.lab/omni/isaac/lab/envs/ui/base_env_window.py
++++ b/source/extensions/omni.isaac.lab/omni/isaac/lab/envs/ui/base_env_window.py
+@@ -60,7 +60,11 @@ class BaseEnvWindow:
+         print("Creating window for environment.")
+         # create window for UI
+         self.ui_window = omni.ui.Window(
+-            window_name, width=400, height=500, visible=True, dock_preference=omni.ui.DockPreference.RIGHT_TOP
++            window_name,
++            width=400,
++            height=500,
++            visible=True,
++            dock_preference=omni.ui.DockPreference.RIGHT_TOP,
+         )
+         # dock next to properties window
+         asyncio.ensure_future(self._dock_window(window_title=self.ui_window.title))
+@@ -114,11 +118,20 @@ class BaseEnvWindow:
+                     "label": "Rendering Mode",
+                     "type": "dropdown",
+                     "default_val": self.env.sim.render_mode.value,
+-                    "items": [member.name for member in self.env.sim.RenderMode if member.value >= 0],
+-                    "tooltip": "Select a rendering mode\n" + self.env.sim.RenderMode.__doc__,
+-                    "on_clicked_fn": lambda value: self.env.sim.set_render_mode(self.env.sim.RenderMode[value]),
++                    "items": [
++                        member.name
++                        for member in self.env.sim.RenderMode
++                        if member.value >= 0
++                    ],
++                    "tooltip": "Select a rendering mode\n"
++                    + self.env.sim.RenderMode.__doc__,
++                    "on_clicked_fn": lambda value: self.env.sim.set_render_mode(
++                        self.env.sim.RenderMode[value]
++                    ),
+                 }
+-                self.ui_window_elements["render_dropdown"] = omni.isaac.ui.ui_utils.dropdown_builder(**render_mode_cfg)
++                self.ui_window_elements["render_dropdown"] = (
++                    omni.isaac.ui.ui_utils.dropdown_builder(**render_mode_cfg)
++                )
+ 
+                 # create animation recording box
+                 record_animate_cfg = {
+@@ -127,13 +140,17 @@ class BaseEnvWindow:
+                     "a_text": "START",
+                     "b_text": "STOP",
+                     "tooltip": "Record the animation of the scene. Only effective if fabric is disabled.",
+-                    "on_clicked_fn": lambda value: self._toggle_recording_animation_fn(value),
++                    "on_clicked_fn": lambda value: self._toggle_recording_animation_fn(
++                        value
++                    ),
+                 }
+-                self.ui_window_elements["record_animation"] = omni.isaac.ui.ui_utils.state_btn_builder(
+-                    **record_animate_cfg
++                self.ui_window_elements["record_animation"] = (
++                    omni.isaac.ui.ui_utils.state_btn_builder(**record_animate_cfg)
+                 )
+                 # disable the button if fabric is not enabled
+-                self.ui_window_elements["record_animation"].enabled = not self.env.sim.is_fabric_enabled()
++                self.ui_window_elements["record_animation"].enabled = (
++                    not self.env.sim.is_fabric_enabled()
++                )
+ 
+     def _build_viewer_frame(self):
+         """Build the viewer-related control frame for the UI."""
+@@ -149,7 +166,9 @@ class BaseEnvWindow:
+         )
+         with self.ui_window_elements["viewer_frame"]:
+             # create stack for controls
+-            self.ui_window_elements["viewer_vstack"] = omni.ui.VStack(spacing=5, height=0)
++            self.ui_window_elements["viewer_vstack"] = omni.ui.VStack(
++                spacing=5, height=0
++            )
+             with self.ui_window_elements["viewer_vstack"]:
+                 # create a number slider to move to environment origin
+                 # NOTE: slider is 1-indexed, whereas the env index is 0-indexed
+@@ -161,35 +180,48 @@ class BaseEnvWindow:
+                     "max": self.env.num_envs,
+                     "tooltip": "The environment index to follow. Only effective if follow mode is not 'World'.",
+                 }
+-                self.ui_window_elements["viewer_env_index"] = omni.isaac.ui.ui_utils.int_builder(**viewport_origin_cfg)
++                self.ui_window_elements["viewer_env_index"] = (
++                    omni.isaac.ui.ui_utils.int_builder(**viewport_origin_cfg)
++                )
+                 # create a number slider to move to environment origin
+-                self.ui_window_elements["viewer_env_index"].add_value_changed_fn(self._set_viewer_env_index_fn)
++                self.ui_window_elements["viewer_env_index"].add_value_changed_fn(
++                    self._set_viewer_env_index_fn
++                )
+ 
+                 # create a tracker for the camera location
+                 viewer_follow_cfg = {
+                     "label": "Follow Mode",
+                     "type": "dropdown",
+                     "default_val": 0,
+-                    "items": [name.replace("_", " ").title() for name in self._viewer_assets_options],
++                    "items": [
++                        name.replace("_", " ").title()
++                        for name in self._viewer_assets_options
++                    ],
+                     "tooltip": "Select the viewport camera following mode.",
+                     "on_clicked_fn": self._set_viewer_origin_type_fn,
+                 }
+-                self.ui_window_elements["viewer_follow"] = omni.isaac.ui.ui_utils.dropdown_builder(**viewer_follow_cfg)
++                self.ui_window_elements["viewer_follow"] = (
++                    omni.isaac.ui.ui_utils.dropdown_builder(**viewer_follow_cfg)
++                )
+ 
+                 # add viewer default eye and lookat locations
+-                self.ui_window_elements["viewer_eye"] = omni.isaac.ui.ui_utils.xyz_builder(
+-                    label="Camera Eye",
+-                    tooltip="Modify the XYZ location of the viewer eye.",
+-                    default_val=self.env.cfg.viewer.eye,
+-                    step=0.1,
+-                    on_value_changed_fn=[self._set_viewer_location_fn] * 3,
++                self.ui_window_elements["viewer_eye"] = (
++                    omni.isaac.ui.ui_utils.xyz_builder(
++                        label="Camera Eye",
++                        tooltip="Modify the XYZ location of the viewer eye.",
++                        default_val=self.env.cfg.viewer.eye,
++                        step=0.1,
++                        on_value_changed_fn=[self._set_viewer_location_fn] * 3,
++                    )
+                 )
+-                self.ui_window_elements["viewer_lookat"] = omni.isaac.ui.ui_utils.xyz_builder(
+-                    label="Camera Target",
+-                    tooltip="Modify the XYZ location of the viewer target.",
+-                    default_val=self.env.cfg.viewer.lookat,
+-                    step=0.1,
+-                    on_value_changed_fn=[self._set_viewer_location_fn] * 3,
++                self.ui_window_elements["viewer_lookat"] = (
++                    omni.isaac.ui.ui_utils.xyz_builder(
++                        label="Camera Target",
++                        tooltip="Modify the XYZ location of the viewer target.",
++                        default_val=self.env.cfg.viewer.lookat,
++                        step=0.1,
++                        on_value_changed_fn=[self._set_viewer_location_fn] * 3,
++                    )
+                 )
+ 
+     def _build_debug_vis_frame(self):
+@@ -215,7 +247,9 @@ class BaseEnvWindow:
+         )
+         with self.ui_window_elements["debug_frame"]:
+             # create stack for debug visualization
+-            self.ui_window_elements["debug_vstack"] = omni.ui.VStack(spacing=5, height=0)
++            self.ui_window_elements["debug_vstack"] = omni.ui.VStack(
++                spacing=5, height=0
++            )
+             with self.ui_window_elements["debug_vstack"]:
+                 elements = [
+                     self.env.scene.terrain,
+@@ -245,7 +279,9 @@ class BaseEnvWindow:
+             if not hasattr(self, "animation_log_dir"):
+                 # create a new log directory
+                 log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+-                self.animation_log_dir = os.path.join(os.getcwd(), "recordings", log_dir)
++                self.animation_log_dir = os.path.join(
++                    os.getcwd(), "recordings", log_dir
++                )
+             # start the recording
+             _ = omni.kit.commands.execute(
+                 "StartRecording",
+@@ -279,7 +315,9 @@ class BaseEnvWindow:
+             temp_stage = Usd.Stage.Open(temp_layer)
+             # update stage data
+             UsdGeom.SetStageUpAxis(temp_stage, UsdGeom.GetStageUpAxis(stage))
+-            UsdGeom.SetStageMetersPerUnit(temp_stage, UsdGeom.GetStageMetersPerUnit(stage))
++            UsdGeom.SetStageMetersPerUnit(
++                temp_stage, UsdGeom.GetStageMetersPerUnit(stage)
++            )
+             # copy the prim
+             Sdf.CreatePrimInLayer(temp_layer, source_prim_path)
+             Sdf.CopySpec(source_layer, source_prim_path, temp_layer, source_prim_path)
+@@ -308,8 +346,12 @@ class BaseEnvWindow:
+             # print the path to the saved stage
+             print("Recording completed.")
+             print(f"\tSaved recorded stage to    : {stage_usd_path}")
+-            print(f"\tSaved recorded animation to: {os.path.join(self.animation_log_dir, 'TimeSample_tk001.usd')}")
+-            print("\nTo play the animation, check the instructions in the following link:")
++            print(
++                f"\tSaved recorded animation to: {os.path.join(self.animation_log_dir, 'TimeSample_tk001.usd')}"
++            )
++            print(
++                "\nTo play the animation, check the instructions in the following link:"
++            )
+             print(
+                 "\thttps://docs.omniverse.nvidia.com/extensions/latest/ext_animation_stage-recorder.html#using-the-captured-timesamples"
+             )
+@@ -322,7 +364,9 @@ class BaseEnvWindow:
+         # Extract the viewport camera controller from environment
+         vcc = self.env.viewport_camera_controller
+         if vcc is None:
+-            raise ValueError("Viewport camera controller is not initialized! Please check the rendering mode.")
++            raise ValueError(
++                "Viewport camera controller is not initialized! Please check the rendering mode."
++            )
+ 
+         # Based on origin type, update the camera view
+         if value == "World":
+@@ -331,7 +375,9 @@ class BaseEnvWindow:
+             vcc.update_view_to_env()
+         else:
+             # find which index the asset is
+-            fancy_names = [name.replace("_", " ").title() for name in self._viewer_assets_options]
++            fancy_names = [
++                name.replace("_", " ").title() for name in self._viewer_assets_options
++            ]
+             # store the desired env index
+             viewer_asset_name = self._viewer_assets_options[fancy_names.index(value)]
+             # update the camera view
+@@ -342,10 +388,18 @@ class BaseEnvWindow:
+         # access the viewport camera controller (for brevity)
+         vcc = self.env.viewport_camera_controller
+         if vcc is None:
+-            raise ValueError("Viewport camera controller is not initialized! Please check the rendering mode.")
++            raise ValueError(
++                "Viewport camera controller is not initialized! Please check the rendering mode."
++            )
+         # obtain the camera locations and set them in the viewpoint camera controller
+-        eye = [self.ui_window_elements["viewer_eye"][i].get_value_as_float() for i in range(3)]
+-        lookat = [self.ui_window_elements["viewer_lookat"][i].get_value_as_float() for i in range(3)]
++        eye = [
++            self.ui_window_elements["viewer_eye"][i].get_value_as_float()
++            for i in range(3)
++        ]
++        lookat = [
++            self.ui_window_elements["viewer_lookat"][i].get_value_as_float()
++            for i in range(3)
++        ]
+         # update the camera view
+         vcc.update_view_location(eye, lookat)
+ 
+@@ -354,7 +408,9 @@ class BaseEnvWindow:
+         # access the viewport camera controller (for brevity)
+         vcc = self.env.viewport_camera_controller
+         if vcc is None:
+-            raise ValueError("Viewport camera controller is not initialized! Please check the rendering mode.")
++            raise ValueError(
++                "Viewport camera controller is not initialized! Please check the rendering mode."
++            )
+         # store the desired env index, UI is 1-indexed
+         vcc.set_view_env_index(model.as_int - 1)
+ 
+@@ -383,7 +439,9 @@ class BaseEnvWindow:
+                 model=omni.ui.SimpleBoolModel(),
+                 enabled=elem.has_debug_vis_implementation,
+                 checked=elem.cfg.debug_vis if elem.cfg else False,
+-                on_checked_fn=lambda value, e=weakref.proxy(elem): e.set_debug_vis(value),
++                on_checked_fn=lambda value, e=weakref.proxy(elem): e.set_debug_vis(
++                    value
++                ),
+             )
+             omni.isaac.ui.ui_utils.add_line_rect_flourish()
+ 
+diff --git a/source/extensions/omni.isaac.lab/omni/isaac/lab/sensors/contact_sensor/contact_sensor.py b/source/extensions/omni.isaac.lab/omni/isaac/lab/sensors/contact_sensor/contact_sensor.py
+index a053ba45..bfba1af9 100644
+--- a/source/extensions/omni.isaac.lab/omni/isaac/lab/sensors/contact_sensor/contact_sensor.py
++++ b/source/extensions/omni.isaac.lab/omni/isaac/lab/sensors/contact_sensor/contact_sensor.py
+@@ -140,7 +140,7 @@ class ContactSensor(SensorBase):
+         if env_ids is None:
+             env_ids = slice(None)
+         # reset accumulative data buffers
+-        self._data.net_forces_w[env_ids] = 0.0
++        # self._data.net_forces_w[env_ids] = 0.0
+         self._data.net_forces_w_history[env_ids] = 0.0
+         if self.cfg.history_length > 0:
+             self._data.net_forces_w_history[env_ids] = 0.0
+@@ -154,7 +154,9 @@ class ContactSensor(SensorBase):
+             self._data.current_contact_time[env_ids] = 0.0
+             self._data.last_contact_time[env_ids] = 0.0
+ 
+-    def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False) -> tuple[list[int], list[str]]:
++    def find_bodies(
++        self, name_keys: str | Sequence[str], preserve_order: bool = False
++    ) -> tuple[list[int], list[str]]:
+         """Find bodies in the articulation based on the name keys.
+ 
+         Args:
+@@ -164,7 +166,9 @@ class ContactSensor(SensorBase):
+         Returns:
+             A tuple of lists containing the body indices and names.
+         """
+-        return string_utils.resolve_matching_names(name_keys, self.body_names, preserve_order)
++        return string_utils.resolve_matching_names(
++            name_keys, self.body_names, preserve_order
++        )
+ 
+     def compute_first_contact(self, dt: float, abs_tol: float = 1.0e-8) -> torch.Tensor:
+         """Checks if bodies that have established contact within the last :attr:`dt` seconds.
+@@ -250,7 +254,9 @@ class ContactSensor(SensorBase):
+         leaf_pattern = self.cfg.prim_path.rsplit("/", 1)[-1]
+         template_prim_path = self._parent_prims[0].GetPath().pathString
+         body_names = list()
+-        for prim in sim_utils.find_matching_prims(template_prim_path + "/" + leaf_pattern):
++        for prim in sim_utils.find_matching_prims(
++            template_prim_path + "/" + leaf_pattern
++        ):
+             # check if prim has contact reporter API
+             if prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
+                 prim_path = prim.GetPath().pathString
+@@ -267,10 +273,14 @@ class ContactSensor(SensorBase):
+         body_names_regex = f"{self.cfg.prim_path.rsplit('/', 1)[0]}/{body_names_regex}"
+         # convert regex expressions to glob expressions for PhysX
+         body_names_glob = body_names_regex.replace(".*", "*")
+-        filter_prim_paths_glob = [expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr]
++        filter_prim_paths_glob = [
++            expr.replace(".*", "*") for expr in self.cfg.filter_prim_paths_expr
++        ]
+ 
+         # create a rigid prim view for the sensor
+-        self._body_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_glob)
++        self._body_physx_view = self._physics_sim_view.create_rigid_body_view(
++            body_names_glob
++        )
+         self._contact_physx_view = self._physics_sim_view.create_rigid_contact_view(
+             body_names_glob, filter_patterns=filter_prim_paths_glob
+         )
+@@ -285,25 +295,43 @@ class ContactSensor(SensorBase):
+             )
+ 
+         # prepare data buffers
+-        self._data.net_forces_w = torch.zeros(self._num_envs, self._num_bodies, 3, device=self._device)
++        self._data.net_forces_w = torch.zeros(
++            self._num_envs, self._num_bodies, 3, device=self._device
++        )
+         # optional buffers
+         # -- history of net forces
+         if self.cfg.history_length > 0:
+             self._data.net_forces_w_history = torch.zeros(
+-                self._num_envs, self.cfg.history_length, self._num_bodies, 3, device=self._device
++                self._num_envs,
++                self.cfg.history_length,
++                self._num_bodies,
++                3,
++                device=self._device,
+             )
+         else:
+             self._data.net_forces_w_history = self._data.net_forces_w.unsqueeze(1)
+         # -- pose of sensor origins
+         if self.cfg.track_pose:
+-            self._data.pos_w = torch.zeros(self._num_envs, self._num_bodies, 3, device=self._device)
+-            self._data.quat_w = torch.zeros(self._num_envs, self._num_bodies, 4, device=self._device)
++            self._data.pos_w = torch.zeros(
++                self._num_envs, self._num_bodies, 3, device=self._device
++            )
++            self._data.quat_w = torch.zeros(
++                self._num_envs, self._num_bodies, 4, device=self._device
++            )
+         # -- air/contact time between contacts
+         if self.cfg.track_air_time:
+-            self._data.last_air_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
+-            self._data.current_air_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
+-            self._data.last_contact_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
+-            self._data.current_contact_time = torch.zeros(self._num_envs, self._num_bodies, device=self._device)
++            self._data.last_air_time = torch.zeros(
++                self._num_envs, self._num_bodies, device=self._device
++            )
++            self._data.current_air_time = torch.zeros(
++                self._num_envs, self._num_bodies, device=self._device
++            )
++            self._data.last_contact_time = torch.zeros(
++                self._num_envs, self._num_bodies, device=self._device
++            )
++            self._data.current_contact_time = torch.zeros(
++                self._num_envs, self._num_bodies, device=self._device
++            )
+         # force matrix: (num_envs, num_bodies, num_filter_shapes, 3)
+         if len(self.cfg.filter_prim_paths_expr) != 0:
+             num_filters = self.contact_physx_view.filter_count
+@@ -320,37 +348,58 @@ class ContactSensor(SensorBase):
+         # obtain the contact forces
+         # TODO: We are handling the indexing ourself because of the shape; (N, B) vs expected (N * B).
+         #   This isn't the most efficient way to do this, but it's the easiest to implement.
+-        net_forces_w = self.contact_physx_view.get_net_contact_forces(dt=self._sim_physics_dt)
+-        self._data.net_forces_w[env_ids, :, :] = net_forces_w.view(-1, self._num_bodies, 3)[env_ids]
++        net_forces_w = self.contact_physx_view.get_net_contact_forces(
++            dt=self._sim_physics_dt
++        )
++        self._data.net_forces_w[env_ids, :, :] = net_forces_w.view(
++            -1, self._num_bodies, 3
++        )[env_ids]
+         # update contact force history
+         if self.cfg.history_length > 0:
+-            self._data.net_forces_w_history[env_ids, 1:] = self._data.net_forces_w_history[env_ids, :-1].clone()
+-            self._data.net_forces_w_history[env_ids, 0] = self._data.net_forces_w[env_ids]
++            self._data.net_forces_w_history[env_ids, 1:] = (
++                self._data.net_forces_w_history[env_ids, :-1].clone()
++            )
++            self._data.net_forces_w_history[env_ids, 0] = self._data.net_forces_w[
++                env_ids
++            ]
+ 
+         # obtain the contact force matrix
+         if len(self.cfg.filter_prim_paths_expr) != 0:
+             # shape of the filtering matrix: (num_envs, num_bodies, num_filter_shapes, 3)
+             num_filters = self.contact_physx_view.filter_count
+             # acquire and shape the force matrix
+-            force_matrix_w = self.contact_physx_view.get_contact_force_matrix(dt=self._sim_physics_dt)
++            force_matrix_w = self.contact_physx_view.get_contact_force_matrix(
++                dt=self._sim_physics_dt
++            )
+             force_matrix_w = force_matrix_w.view(-1, self._num_bodies, num_filters, 3)
+             self._data.force_matrix_w[env_ids] = force_matrix_w[env_ids]
+ 
+         # obtain the pose of the sensor origin
+         if self.cfg.track_pose:
+-            pose = self.body_physx_view.get_transforms().view(-1, self._num_bodies, 7)[env_ids]
++            pose = self.body_physx_view.get_transforms().view(-1, self._num_bodies, 7)[
++                env_ids
++            ]
+             pose[..., 3:] = convert_quat(pose[..., 3:], to="wxyz")
+-            self._data.pos_w[env_ids], self._data.quat_w[env_ids] = pose.split([3, 4], dim=-1)
++            self._data.pos_w[env_ids], self._data.quat_w[env_ids] = pose.split(
++                [3, 4], dim=-1
++            )
+ 
+         # obtain the air time
+         if self.cfg.track_air_time:
+             # -- time elapsed since last update
+             # since this function is called every frame, we can use the difference to get the elapsed time
+-            elapsed_time = self._timestamp[env_ids] - self._timestamp_last_update[env_ids]
++            elapsed_time = (
++                self._timestamp[env_ids] - self._timestamp_last_update[env_ids]
++            )
+             # -- check contact state of bodies
+-            is_contact = torch.norm(self._data.net_forces_w[env_ids, :, :], dim=-1) > self.cfg.force_threshold
++            is_contact = (
++                torch.norm(self._data.net_forces_w[env_ids, :, :], dim=-1)
++                > self.cfg.force_threshold
++            )
+             is_first_contact = (self._data.current_air_time[env_ids] > 0) * is_contact
+-            is_first_detached = (self._data.current_contact_time[env_ids] > 0) * ~is_contact
++            is_first_detached = (
++                self._data.current_contact_time[env_ids] > 0
++            ) * ~is_contact
+             # -- update the last contact time if body has just become in contact
+             self._data.last_air_time[env_ids] = torch.where(
+                 is_first_contact,
+@@ -359,7 +408,9 @@ class ContactSensor(SensorBase):
+             )
+             # -- increment time for bodies that are not in contact
+             self._data.current_air_time[env_ids] = torch.where(
+-                ~is_contact, self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
++                ~is_contact,
++                self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1),
++                0.0,
+             )
+             # -- update the last contact time if body has just detached
+             self._data.last_contact_time[env_ids] = torch.where(
+@@ -369,7 +420,9 @@ class ContactSensor(SensorBase):
+             )
+             # -- increment time for bodies that are in contact
+             self._data.current_contact_time[env_ids] = torch.where(
+-                is_contact, self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
++                is_contact,
++                self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1),
++                0.0,
+             )
+ 
+     def _set_debug_vis_impl(self, debug_vis: bool):
+@@ -393,7 +446,9 @@ class ContactSensor(SensorBase):
+         # marker indices
+         # 0: contact, 1: no contact
+         net_contact_force_w = torch.norm(self._data.net_forces_w, dim=-1)
+-        marker_indices = torch.where(net_contact_force_w > self.cfg.force_threshold, 0, 1)
++        marker_indices = torch.where(
++            net_contact_force_w > self.cfg.force_threshold, 0, 1
++        )
+         # check if prim is visualized
+         if self.cfg.track_pose:
+             frame_origins: torch.Tensor = self._data.pos_w
+@@ -401,7 +456,9 @@ class ContactSensor(SensorBase):
+             pose = self.body_physx_view.get_transforms()
+             frame_origins = pose.view(-1, self._num_bodies, 7)[:, :, :3]
+         # visualize
+-        self.contact_visualizer.visualize(frame_origins.view(-1, 3), marker_indices=marker_indices.view(-1))
++        self.contact_visualizer.visualize(
++            frame_origins.view(-1, 3), marker_indices=marker_indices.view(-1)
++        )
+ 
+     """
+     Internal simulation callbacks.
+diff --git a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_pos_dist_and_torque.py b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_pos_dist_and_torque.py
+index b787b395..40e6799d 100644
+--- a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_pos_dist_and_torque.py
++++ b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/plotting/plot_pos_dist_and_torque.py
+@@ -10,8 +10,16 @@ log_dir = "/home/luca/isaaclab_ws/IsaacLab/source/extensions/omni.isaac.lab_task
+ episodes = sorted([f for f in os.listdir(log_dir) if f.endswith(".json")])
+ all_distances = []
+ all_mean_torque = []
++episode_numbers = []
+ 
+ for episode_file in episodes:
++    # Extract episode number from filename
++    try:
++        episode_num = int(episode_file.split("_")[-1].split(".")[0])
++        episode_numbers.append(episode_num)
++    except ValueError:
++        continue  # Skip if filename format is incorrect
++
+     with open(os.path.join(log_dir, episode_file), "r") as f:
+         data = json.load(f)
+         all_distances.append(data["dist_cube_cam"])
+@@ -33,19 +41,46 @@ axs[0].set_title("Cube Distance Over Time", fontsize=11)
+ axs[0].grid(True, linestyle="--", linewidth=0.5)
+ axs[0].set_ylim(0, None)
+ 
+-# ✅ Plot 2: Mean Torque Over Time (Clipped to ±200 N)
++# ✅ Plot 2: Mean Torque Over Time (Clipped to ±400 N)
++plotted_penalty = False
++plotted_no_penalty = False
++
+ for i in range(len(all_mean_torque)):
+     steps = np.arange(len(all_mean_torque[i]))
++
++    # Determine linestyle and color based on episode number
++    if episode_numbers[i] >= 800:
++        linestyle, color, label = "-", "blue", "Torque Penalty"
++        if plotted_penalty:
++            label = None  # Avoid duplicate legend entry
++        else:
++            plotted_penalty = True
++    else:
++        linestyle, color, label = "--", "orange", "No Penalty"
++        if plotted_no_penalty:
++            label = None  # Avoid duplicate legend entry
++        else:
++            plotted_no_penalty = True
++
+     axs[1].plot(
+-        steps, np.clip(all_mean_torque[i], -400, 400), color="purple", linewidth=1
++        steps,
++        np.clip(all_mean_torque[i], -400, 400),
++        color=color,
++        linewidth=1,
++        linestyle=linestyle,
++        label=label,  # ✅ Assign label for legend
+     )
+ 
++# ✅ Configure the second plot (Torque)
+ axs[1].set_xlabel("Episode Steps")
+-axs[1].set_ylabel("Mean Torque (N)")
++axs[1].set_ylabel("Mean Torque (Nm)")
+ axs[1].set_title("Mean Torque Over Time", fontsize=11)
+ axs[1].grid(True, linestyle="--", linewidth=0.5)
+ axs[1].set_ylim(0, 200)  # ✅ Clipping the torque values
+ 
++# ✅ Add the legend
++axs[1].legend(loc="upper right", fontsize=10)
++
+ # ✅ Reduce whitespace to optimize space in the thesis figure
+ plt.tight_layout(pad=1.5)
+ 
+@@ -57,4 +92,4 @@ plt.savefig(save_path_distance_torque, dpi=300)
+ plt.close(fig)
+ 
+ # ✅ Return the path where the figure is saved
+-save_path_distance_torque
++print(f"Plot saved at: {save_path_distance_torque}")
+diff --git a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env.py b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env.py
+index 6988192b..2e7d09e6 100644
+--- a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env.py
++++ b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env.py
+@@ -187,6 +187,9 @@ class HawUr5Env(DirectRLEnv):
+ 
+         self.grasp_success = torch.zeros(self.scene.num_envs, device=self.device)
+         self.partial_grasp = torch.zeros(self.scene.num_envs, device=self.device)
++        self.container_contact = torch.zeros(
++            self.scene.num_envs, device=self.device, dtype=torch.bool
++        )
+ 
+         # Yolo model for cube detection
+         # self.yolov11 = YOLO("yolo11s.pt")
+@@ -338,7 +341,6 @@ class HawUr5Env(DirectRLEnv):
+             #     translation=cube_pos,
+             # )
+ 
+-            # self.cube = RigidObject(cfg=self.cfg.cube_rigid_obj_cfg)
+             self.cube = spawn_from_usd(
+                 prim_path="/World/envs/env_.*/Cube",
+                 cfg=self.cfg.cube_usd_cfg,
+@@ -359,6 +361,15 @@ class HawUr5Env(DirectRLEnv):
+         self.camera_depth = Camera(cfg=self.cfg.camera_depth_cfg)
+         self.scene.sensors["camera_depth"] = self.camera_depth
+ 
++        self.contact_l = ContactSensor(cfg=self.cfg.contact_cfg_l)
++        self.scene.sensors["contact_l"] = self.contact_l
++        self.contact_r = ContactSensor(cfg=self.cfg.contact_cfg_r)
++        self.scene.sensors["contact_r"] = self.contact_r
++        self.contact_c = ContactSensor(cfg=self.cfg.contact_cfg_c)
++        self.scene.sensors["contact_c"] = self.contact_c
++        self.contact_t = ContactSensor(cfg=self.cfg.contact_cfg_t)
++        self.scene.sensors["contact_t"] = self.contact_t
++
+         self._contact_sensor_interface = _sensor.acquire_contact_sensor_interface()
+ 
+         # self.cs = ContactSensor(cfg=self.cfg.contact_sensor)
+@@ -517,75 +528,62 @@ class HawUr5Env(DirectRLEnv):
+         success_flags = []
+         partial_grasp_flags = []
+ 
+-        for i in range(self.scene.num_envs):
+-            # Resolve contact sensor paths for this env
+-            path_L = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/left_inner_finger/collisions/contact_plate/Contact_Sensor"
+-            path_R = f"/World/envs/env_{i}/ur5/onrobot_rg6_model/right_inner_finger/collisions/contact_plate/Contact_Sensor"
+-            path_C = f"/World/envs/env_{i}/Cube/Cube/Contact_Sensor"
++        self.contact_l._update_outdated_buffers()
++        left_contact = self.contact_l.compute_first_contact(self.cfg.f_update).squeeze(
++            -1
++        )
++        self.contact_r._update_outdated_buffers()
++        right_contact = self.contact_r.compute_first_contact(self.cfg.f_update).squeeze(
++            -1
++        )
++        self.contact_c._update_outdated_buffers()
++        cube_contact = self.contact_c.compute_first_contact(self.cfg.f_update).squeeze(
++            -1
++        )
++        self.contact_t._update_outdated_buffers()
++        container_contact = self.contact_t.compute_first_contact(
++            self.cfg.f_update
++        ).squeeze(-1)
++        self.container_contact = container_contact
++
++        # Grasp success
++        grasp_success = (
++            left_contact
++            & right_contact
++            & cube_contact
++            & ~container_contact
++            & (self.dist_cube_cam > 0.16)
++            & (self.data_age < 3.0)
++        )
+ 
+-            # Read sensor states
+-            Sensor_L = self._contact_sensor_interface.get_sensor_reading(
+-                path_L, use_latest_data=True
+-            )
+-            Sensor_R = self._contact_sensor_interface.get_sensor_reading(
+-                path_R, use_latest_data=True
+-            )
+-            Sensor_Cube = self._contact_sensor_interface.get_sensor_reading(path_C)
++        partial_grasp_success = (
++            left_contact
++            & cube_contact
++            & ~right_contact
++            & ~container_contact
++            & (self.dist_cube_cam > 0.16)
++            & (self.data_age < 3.0)
++        ) | (
++            right_contact
++            & cube_contact
++            & ~left_contact
++            & ~container_contact
++            & (self.dist_cube_cam > 0.16)
++            & (self.data_age < 3.0)
++        )
+ 
+-            # Read raw contact data (includes contact info like IDs)
+-            raw_data_L = self._contact_sensor_interface.get_contact_sensor_raw_data(
+-                path_L
+-            )
+-            raw_data_R = self._contact_sensor_interface.get_contact_sensor_raw_data(
+-                path_R
+-            )
+-            raw_data_C = self._contact_sensor_interface.get_contact_sensor_raw_data(
+-                path_C
+-            )
++        if torch.any(grasp_success):
++            grasp_idx = torch.where(grasp_success)[0]
++            print(f"Grasp success in envs: {grasp_idx}")
+ 
+-            # Logic: All must be in contact AND contact must be with each other
+-            if (
+-                Sensor_L.in_contact
+-                and Sensor_R.in_contact
+-                and Sensor_Cube.in_contact
+-                # and raw_data_L
+-                # and raw_data_R
+-                # and raw_data_C
+-                # and raw_data_L[0][3] == raw_data_C[0][2]
+-                # and raw_data_R[0][3] == raw_data_C[0][2]
+-                and self.dist_cube_cam[i].item() > 0.15
+-            ):
+-                success_flags.append(True)
+-                partial_grasp_flags.append(False)
+-                print(f"Env {i}: Grasp success")
+-
+-            elif (
+-                Sensor_L.in_contact
+-                and Sensor_Cube.in_contact
+-                # and raw_data_L
+-                # and raw_data_C
+-                # and raw_data_L[0][3] == raw_data_C[0][2]
+-                and self.dist_cube_cam[i].item() > 0.15
+-            ) or (
+-                Sensor_R.in_contact
+-                and Sensor_Cube.in_contact
+-                # and raw_data_R
+-                # and raw_data_C
+-                # and raw_data_R[0][3] == raw_data_C[0][2]
+-                and self.dist_cube_cam[i].item() > 0.15
+-            ):
+-                print(f"Env {i}: Partial grasp")
+-                partial_grasp_flags.append(True)
+-                success_flags.append(False)
+-            else:
+-                success_flags.append(False)
+-                partial_grasp_flags.append(False)
+-
+-        # Convert to torch tensor
+-        return (
+-            torch.tensor(success_flags, device=self.device),
+-            torch.tensor(partial_grasp_flags, device=self.device),
+-        )
++        if torch.any(partial_grasp_success):
++            grasp_idx = torch.where(partial_grasp_success)[0]
++            print(f"Partial grasp in envs: {grasp_idx}")
++
++        grasp_success = grasp_success.squeeze(-1)
++        partial_grasp_success = partial_grasp_success.squeeze(-1)
++
++        return (grasp_success, partial_grasp_success)
+ 
+     def _get_observations(self) -> dict:
+ 
+@@ -757,13 +755,10 @@ class HawUr5Env(DirectRLEnv):
+                 self.num_envs, dtype=torch.bool, device=self.device
+             )
+ 
+-        # position reached
+-        self.goal_reached, self.partial_grasp = self.check_grasp_success()
+-
+         # Resolves the issue of the goal_reached tensor becoming a scalar when the number of environments is 1
+         if self.cfg.scene.num_envs == 1:
+-            self.goal_reached = self.goal_reached.unsqueeze(0)
+-        reset_terminated = self.goal_reached | self.torque_limit_exeeded
++            self.grasp_success = self.grasp_success.unsqueeze(0)
++        reset_terminated = self.grasp_success | self.torque_limit_exeeded
+         return reset_terminated, time_out
+ 
+     def _randomize_object_positions(self, env_id):
+@@ -958,6 +953,8 @@ class HawUr5Env(DirectRLEnv):
+             self.cfg.pickup_reward_scaling,
+             self.partial_grasp,
+             self.cfg.partial_grasp_reward_scaling,
++            self.container_contact,
++            self.cfg.container_contact_penalty_scaling,
+         )
+ 
+         # self.total_penalty_alive += rewards[0]
+@@ -1035,6 +1032,8 @@ def compute_rewards(
+     pickup_reward_scaling: float,
+     partial_grasp: torch.Tensor,
+     partial_grasp_reward_scaling: float,
++    container_contact: torch.Tensor,
++    container_contact_penalty_scaling: float,
+ ) -> torch.Tensor:
+ 
+     penalty_alive = aliverewardscale * (1.0 - reset_terminated.float())
+@@ -1095,10 +1094,22 @@ def compute_rewards(
+         torch.tensor(0.0, dtype=dist_cube_cam.dtype, device=dist_cube_cam.device),
+     )
+ 
++    # Container contact penalty
++    container_contact_penalty_t = torch.where(
++        container_contact,
++        torch.tensor(1.0, device=container_contact.device),
++        torch.tensor(0.0, device=container_contact.device),
++    )
++    container_contact_penalty = (
++        container_contact_penalty_scaling * container_contact_penalty_t
++    )
++
+     pickup_reward += (
+         open_gripper_incentive + close_gripper_incentive + partial_grasp_reward
+     )
+ 
++    pickup_reward -= container_contact_penalty
++
+     # Exponential decay of reward with distance
+     # dist_cube_cam = torch.where(
+     #     (dist_cube_cam > 0.0) & (dist_cube_cam < 0.2),
+diff --git a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env_cfg.py b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env_cfg.py
+index ddd046b9..fb9a58f4 100644
+--- a/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env_cfg.py
++++ b/source/extensions/omni.isaac.lab_tasks/omni/isaac/lab_tasks/direct/ur5rl/ur5_rl_env_cfg.py
+@@ -16,12 +16,9 @@ from omni.isaac.lab.sim.spawners.from_files import (
+     spawn_from_usd,
+     UsdFileCfg,
+ )
+-from omni.isaac.lab.sim.spawners.shapes import spawn_cuboid, CuboidCfg
++from omni.isaac.lab.sim.spawners.shapes import CuboidCfg
+ from omni.isaac.lab.assets import (
+-    RigidObject,
+     RigidObjectCfg,
+-    RigidObjectCollection,
+-    RigidObjectCollectionCfg,
+ )
+ from omni.isaac.lab.utils import configclass
+ from omni.isaac.lab.sensors import CameraCfg, Camera, ContactSensorCfg
+@@ -103,7 +100,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
+     goal_reached_scaling = 10.0
+     approach_reward = 0.03
+     pickup_reward_scaling = 5.0  # 0.03  #! was 0.2
+-    partial_grasp_reward_scaling = 0.1
++    partial_grasp_reward_scaling = 0.03
++    container_contact_penalty_scaling = 0.005
+     torque_limit = 500  # was 500.0
+ 
+     decimation = 2
+@@ -127,7 +125,7 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
+ 
+     cube_usd_cfg = sim_utils.UsdFileCfg(
+         usd_path="omniverse://localhost/MyAssets/Objects/Cube.usd",
+-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
++        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=False),
+     )
+ 
+     # Camera
+@@ -166,6 +164,35 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
+         ),
+     )
+ 
++    contact_cfg_l = ContactSensorCfg(
++        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/left_inner_finger",
++        update_period=0.0,
++        history_length=6,
++        debug_vis=False,
++        track_air_time=True,
++    )
++    contact_cfg_r = ContactSensorCfg(
++        prim_path="/World/envs/env_.*/ur5/onrobot_rg6_model/right_inner_finger",
++        update_period=0.0,
++        history_length=6,
++        debug_vis=False,
++        track_air_time=True,
++    )
++    contact_cfg_t = ContactSensorCfg(
++        prim_path="/World/envs/env_.*/container/Container",
++        update_period=0.0,
++        history_length=6,
++        debug_vis=False,
++        track_air_time=True,
++    )
++    contact_cfg_c = ContactSensorCfg(
++        prim_path="/World/envs/env_.*/Cube/Cube",
++        update_period=0.0,
++        history_length=6,
++        debug_vis=False,
++        track_air_time=True,
++    )
++
+     # Gripper parameters
+ 
+     cuboid_cfg = sim_utils.CuboidCfg(
+@@ -222,7 +249,8 @@ class HawUr5EnvCfg(DirectRLEnvCfg):
+     # robot
+     robot_cfg: ArticulationCfg = ArticulationCfg(
+         spawn=sim_utils.UsdFileCfg(
+-            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper_col.usd"
++            usd_path="omniverse://localhost/MyAssets/haw_ur5_assembled/haw_u5_with_gripper.usd",
++            activate_contact_sensors=True,
+         ),
+         prim_path="/World/envs/env_.*/ur5",
+         actuators={
+diff --git a/source/standalone/ur5rl/PACT.py b/source/standalone/ur5rl/PACT.py
+index db2570c5..930c5983 100644
+--- a/source/standalone/ur5rl/PACT.py
++++ b/source/standalone/ur5rl/PACT.py
+@@ -470,7 +470,7 @@ def main():
+             -0.0030048529254358414,
+             -1.0,
+         ]
+-        cube_pos = [1.0, 0.0, 0.57]
++        cube_pos = [0.93, 0.0, 0.57]
+ 
+     # env_cfg.cube_init_state = cube_pos  # type: ignore
+     env_cfg.arm_joints_init_state = real_joint_angles[:-1]  # type: ignore
+@@ -602,6 +602,7 @@ def main():
+     print(f"Interrupt: {interrupt}")
+     # interrupt = True  #! Force Retrain for Debug
+     success = True  #! Force Real Robot for Debug
++    return
+ 
+     if success:
+         print("Task solved in Sim!")
